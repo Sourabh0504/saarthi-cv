@@ -1,11 +1,11 @@
 import { useEffect, useMemo } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend, ReferenceLine } from "recharts";
-import type { Creative, DailyRow } from "@/data/mockData";
-import { computeMetrics, fmtINR, fmtNum, fmtPct, getYouTubeId } from "@/lib/metrics";
+import type { Creative, DailyRow } from "@/lib/api";
+import { computeMetrics, fmtINR, fmtINR0, fmtNum, fmtPct, getYouTubeId } from "@/lib/metrics";
 import { TrendingUp, TrendingDown, Minus, ChevronLeft, ChevronRight, ArrowLeft, ArrowRight, ChevronRight as Chev } from "lucide-react";
 import { DIM_META, type Dim } from "@/lib/hierarchy";
-import { cn } from "@/lib/utils";
+import { cn, copyText } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
 interface Props {
@@ -257,11 +257,21 @@ export function CreativeDetailModal({
 
         <div className="grid md:grid-cols-[200px_1fr] gap-4 pt-2">
           <div className="aspect-square rounded-xl overflow-hidden border border-border bg-muted/40">
-            {creative.creative_type === "Image" && (
+            {creative.creative_type === "Image" && creative.creative_url && (
               <img src={creative.creative_url} alt="" className="w-full h-full object-cover" />
             )}
             {ytId && (
               <img src={`https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`} alt="" className="w-full h-full object-cover" />
+            )}
+            {(creative.creative_type === "Image" && !creative.creative_url) && (
+              <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">
+                No preview available
+              </div>
+            )}
+            {(creative.creative_type === "Video" && !ytId) && (
+              <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">
+                No preview available
+              </div>
             )}
             {creative.creative_type === "Text" && (
               <div className="w-full h-full p-3 bg-white text-[#202124] flex flex-col justify-center gap-1 text-xs">
@@ -274,7 +284,7 @@ export function CreativeDetailModal({
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             <Stat label="Impressions" value={fmtNum(totals.impressions)} />
             <Stat label="Clicks" value={fmtNum(totals.clicks)} />
-            <Stat label="Spend" value={fmtINR(totals.cost)} accent />
+            <Stat label="Spend" value={fmtINR0(totals.cost)} accent />
             <Stat label="Conversions" value={totals.conversions.toFixed(1)} />
             <Stat label="CTR" value={fmtPct(totals.ctr)} delta={<Delta value={ctrDelta} />} sub={`avg ${fmtPct(avgs.ctr)}`} />
             <Stat label="CPC" value={fmtINR(totals.cpc)} />
@@ -348,7 +358,14 @@ function Stat({ label, value, sub, delta, accent }: { label: string; value: stri
   return (
     <div className={cn("rounded-lg border border-border bg-background/40 p-2.5", accent && "border-gold/30 bg-gold/5")}>
       <div className="text-[10px] uppercase tracking-widest text-muted-foreground">{label}</div>
-      <div className="font-display font-bold text-base tabular-nums leading-tight mt-0.5">{value}</div>
+      <button
+        type="button"
+        onClick={() => { void copyText(value); }}
+        className="font-display font-bold text-base tabular-nums leading-tight mt-0.5 cursor-copy text-left"
+        title="Click to copy"
+      >
+        {value}
+      </button>
       {(sub || delta) && (
         <div className="flex items-center justify-between gap-1 mt-1">
           {sub && <span className="text-[10px] text-muted-foreground">{sub}</span>}

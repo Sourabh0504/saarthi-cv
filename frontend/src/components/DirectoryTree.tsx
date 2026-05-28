@@ -1,10 +1,10 @@
 import { useMemo, useState, useRef, useEffect } from "react";
 import { ChevronRight, Video as VideoIcon, FileText, Sparkles } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import type { Creative } from "@/data/mockData";
-import { computeMetrics, fmtINR, fmtNum, fmtPct, type ComputedMetrics } from "@/lib/metrics";
+import type { Creative } from "@/lib/api";
+import { computeMetrics, fmtINR, fmtINR0, fmtNum, fmtPct, type ComputedMetrics } from "@/lib/metrics";
 import { type Dim, DIM_META } from "@/lib/hierarchy";
-import { cn } from "@/lib/utils";
+import { cn, copyText } from "@/lib/utils";
 
 interface Row {
   creative: Creative;
@@ -101,6 +101,13 @@ function getYouTubeId(url: string): string | null {
 function CreativeThumb({ creative, size }: { creative: Creative; size: number }) {
   const style = { width: size, height: size } as const;
   if (creative.creative_type === "Image") {
+    if (!creative.creative_url) {
+      return (
+        <div style={style} className="rounded-lg border border-border bg-accent shrink-0 flex items-center justify-center">
+          <FileText className="text-muted-foreground" style={{ width: size * 0.4, height: size * 0.4 }} />
+        </div>
+      );
+    }
     return (
       <img
         src={creative.creative_url}
@@ -132,7 +139,7 @@ function CreativeThumb({ creative, size }: { creative: Creative; size: number })
 const COL_DEFS: Array<{ key: string; label: string; render: (m: ComputedMetrics) => string }> = [
   { key: "impressions", label: "Impr.",  render: m => fmtNum(m.impressions) },
   { key: "clicks",      label: "Clicks", render: m => fmtNum(m.clicks) },
-  { key: "cost",        label: "Spend",  render: m => fmtINR(m.cost) },
+  { key: "cost",        label: "Spend",  render: m => fmtINR0(m.cost) },
   { key: "conversions", label: "Conv.",  render: m => m.conversions.toFixed(1) },
   { key: "ctr",         label: "CTR",    render: m => fmtPct(m.ctr) },
   { key: "cpc",         label: "CPC",    render: m => fmtINR(m.cpc) },
@@ -140,6 +147,19 @@ const COL_DEFS: Array<{ key: string; label: string; render: (m: ComputedMetrics)
   { key: "cr",          label: "CR",     render: m => fmtPct(m.cr) },
   { key: "cpa",         label: "CPA",    render: m => fmtINR(m.cpa) },
 ];
+
+function CopyableValue({ text, className }: { text: string; className?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); void copyText(text); }}
+      className={cn("w-full text-right cursor-copy", className)}
+      title="Click to copy"
+    >
+      {text}
+    </button>
+  );
+}
 
 interface HoverState {
   creative: Creative;
@@ -224,8 +244,10 @@ export function DirectoryTree({ rows, visibleCols, hierarchy, structureOnly = fa
     hoverStyle = { left, top, width: PREV_W };
   }
 
-  // Grid template for header + rows: first col flexes, metric cols are auto
-  const colTemplate = `minmax(280px, 1fr) ${cols.map(() => "minmax(72px, max-content)").join(" ")}`.trim();
+  // Grid template for header + rows: fixed metric widths to keep numbers aligned
+  const metricColWidth = 120;
+  const colTemplate = `minmax(280px, 1fr) ${cols.map(() => `minmax(${metricColWidth}px, ${metricColWidth}px)`).join(" ")}`.trim();
+  const minTableWidth = 280 + cols.length * metricColWidth;
 
   const items = virtualizer.getVirtualItems();
   const totalSize = virtualizer.getTotalSize();
@@ -234,7 +256,7 @@ export function DirectoryTree({ rows, visibleCols, hierarchy, structureOnly = fa
     <div className="glass rounded-2xl overflow-hidden relative">
       {/* Header (non-scrolling vertically; horizontally scrollable with body) */}
       <div className="overflow-x-auto">
-        <div style={{ minWidth: 600 }}>
+        <div style={{ minWidth: minTableWidth }}>
           {/* Column header */}
           <div
             className="bg-background/80 backdrop-blur-xl border-b border-white/10 sticky top-0 z-20 grid items-center"
@@ -273,7 +295,7 @@ export function DirectoryTree({ rows, visibleCols, hierarchy, structureOnly = fa
                   "py-2.5 px-3 text-right tabular-nums whitespace-nowrap font-display font-bold text-sm",
                   c.key === "cost" ? "text-gold" : "text-foreground",
                 )}>
-                  {c.render(grandTotal)}
+                    <CopyableValue text={c.render(grandTotal)} className="font-display font-bold" />
                 </div>
               ))}
             </div>
@@ -400,7 +422,7 @@ export function DirectoryTree({ rows, visibleCols, hierarchy, structureOnly = fa
                         isSecond ? "font-semibold text-sm" : "text-sm",
                         c.key === "cost" && isTop && "text-gold",
                       )}>
-                        {c.render(node.metrics)}
+                        <CopyableValue text={c.render(node.metrics)} />
                       </div>
                     ))}
                   </div>

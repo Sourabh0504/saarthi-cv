@@ -1,20 +1,22 @@
 import { Calendar, Search, Columns3, FileDown, FileText } from "lucide-react";
-import type { Funnel, Status } from "@/data/mockData";
+import type { Creative } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 export interface Filters {
   startDate: string;
-  endDate: string;
-  status: "All" | Status;
-  city: string;
-  funnel: "All" | Funnel;
-  search: string;
+  endDate:   string;
+  status:    "All" | Creative["status"];
+  city:      string;
+  funnel:    "All" | Creative["funnel"];
+  search:    string;
 }
 
 interface Props {
   filters: Filters;
   setFilters: (f: Filters) => void;
+  minDate?: string;
+  maxDate?: string;
   cities: string[];
   columns: Record<string, boolean>;
   setColumns: (c: Record<string, boolean>) => void;
@@ -36,18 +38,51 @@ const colOptions = [
   { key: "cpa", label: "CPA" },
 ];
 
-export function FilterPanel({ filters, setFilters, cities, columns, setColumns, onExportPDF, onExportCSV, rightSlot }: Props) {
+export function FilterPanel({ filters, setFilters, minDate, maxDate, cities, columns, setColumns, onExportPDF, onExportCSV, rightSlot }: Props) {
 
-  const update = <K extends keyof Filters>(k: K, v: Filters[K]) => setFilters({ ...filters, [k]: v });
+  const clampDate = (value: string) => {
+    if (!value) return value;
+    if (minDate && value < minDate) return minDate;
+    if (maxDate && value > maxDate) return maxDate;
+    return value;
+  };
+
+  const update = <K extends keyof Filters>(k: K, v: Filters[K]) => {
+    if (k === "startDate" || k === "endDate") {
+      const next = { ...filters, [k]: v as string } as Filters;
+      next.startDate = clampDate(next.startDate);
+      next.endDate = clampDate(next.endDate);
+      if (next.startDate && next.endDate && next.startDate > next.endDate) {
+        if (k === "startDate") next.endDate = next.startDate;
+        else next.startDate = next.endDate;
+      }
+      setFilters(next);
+      return;
+    }
+    setFilters({ ...filters, [k]: v });
+  };
+
+  const startMax = filters.endDate || maxDate;
+  const endMin   = filters.startDate || minDate;
 
   return (
     <div className="filter-panel glass rounded-2xl p-4 flex flex-wrap items-center gap-3 no-print">
       <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-background/40 border border-border">
         <Calendar className="w-4 h-4 text-muted-foreground" />
-        <input type="date" value={filters.startDate} onChange={e => update("startDate", e.target.value)}
+        <input
+          type="date"
+          value={filters.startDate}
+          min={minDate}
+          max={startMax}
+          onChange={e => update("startDate", e.target.value)}
           className="bg-transparent text-sm outline-none [color-scheme:dark]" />
         <span className="text-muted-foreground text-xs">→</span>
-        <input type="date" value={filters.endDate} onChange={e => update("endDate", e.target.value)}
+        <input
+          type="date"
+          value={filters.endDate}
+          min={endMin}
+          max={maxDate}
+          onChange={e => update("endDate", e.target.value)}
           className="bg-transparent text-sm outline-none [color-scheme:dark]" />
       </div>
 

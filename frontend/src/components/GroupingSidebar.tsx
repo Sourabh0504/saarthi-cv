@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { ChevronRight, ChevronDown, ArrowUp, ArrowDown, Eye, EyeOff, Check, Megaphone, BarChart3, Network } from "lucide-react";
-import type { Creative } from "@/data/mockData";
+import type { Creative } from "@/lib/api";
 import { type Dim, DIM_META, ALL_DIMS, HIERARCHY_PRESETS } from "@/lib/hierarchy";
 import { cn } from "@/lib/utils";
 

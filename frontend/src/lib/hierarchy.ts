@@ -1,4 +1,4 @@
-import type { Creative } from "@/data/mockData";
+import type { Creative } from "@/lib/api";
 import { MapPin, Layers, Megaphone, FolderTree, Boxes } from "lucide-react";
 
 export type Dim = "city" | "funnel" | "type" | "campaign" | "adgroup";

@@ -26,12 +26,28 @@ export function computeMetrics(a: Aggregated): ComputedMetrics {
   };
 }
 
-export const fmtINR = (v: number) =>
-  "₹" + (v >= 100000 ? (v / 100000).toFixed(2) + "L" : v >= 1000 ? (v / 1000).toFixed(1) + "k" : v.toFixed(0));
+const inrFormatter = new Intl.NumberFormat("en-IN", {
+  style: "currency",
+  currency: "INR",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
 
-export const fmtNum = (v: number) =>
-  v >= 1_000_000 ? (v / 1_000_000).toFixed(2) + "M" :
-  v >= 1_000 ? (v / 1_000).toFixed(1) + "k" : v.toFixed(0);
+const inrFormatter0 = new Intl.NumberFormat("en-IN", {
+  style: "currency",
+  currency: "INR",
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 0,
+});
+
+const numFormatter = new Intl.NumberFormat("en-IN", {
+  maximumFractionDigits: 0,
+});
+
+export const fmtINR = (v: number) => inrFormatter.format(v || 0);
+export const fmtINR0 = (v: number) => inrFormatter0.format(v || 0);
+
+export const fmtNum = (v: number) => numFormatter.format(v || 0);
 
 export const fmtPct = (v: number) => v.toFixed(2) + "%";
 

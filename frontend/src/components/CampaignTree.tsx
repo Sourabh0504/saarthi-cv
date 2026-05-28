@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { ChevronRight, ChevronDown, Folder } from "lucide-react";
-import type { Creative } from "@/data/mockData";
+import type { Creative } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface Props {

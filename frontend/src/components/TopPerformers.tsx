@@ -1,6 +1,7 @@
 import { useMemo } from "react";
-import { Trophy, Medal, Award } from "lucide-react";
-import type { Creative } from "@/data/mockData";
+import { Trophy, Medal, Award, FileText } from "lucide-react";
+import { copyText } from "@/lib/utils";
+import type { Creative } from "@/lib/api";
 import { type ComputedMetrics, fmtINR, fmtNum, fmtPct, getYouTubeId } from "@/lib/metrics";
 
 interface Row { creative: Creative; metrics: ComputedMetrics; }
@@ -68,16 +69,37 @@ function RankColumn({ title, rows, metric }: { title: string; rows: Row[]; metri
                 <Icon className={`w-5 h-5 ${m.color}`} />
               </div>
               <div className="shrink-0 w-20 h-12 rounded-lg overflow-hidden bg-muted">
-                {r.creative.creative_type === "Image" && <img src={r.creative.creative_url} alt="" className="w-full h-full object-cover" />}
+                {r.creative.creative_type === "Image" && r.creative.creative_url && (
+                  <img src={r.creative.creative_url} alt="" className="w-full h-full object-cover" />
+                )}
                 {ytId && <img src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`} alt="" className="w-full h-full object-cover" />}
+                {!r.creative.creative_url && !ytId && (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <FileText className="w-4 h-4 text-muted-foreground" />
+                  </div>
+                )}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="font-display font-semibold text-sm truncate">{r.creative.headline}</div>
                 <div className="text-[11px] text-muted-foreground truncate">{r.creative.city} · {r.creative.category} · {r.creative.funnel}</div>
               </div>
               <div className="text-right">
-                <div className="font-display font-bold text-gold tabular-nums">{metricFmt[metric](r.metrics[metric])}</div>
-                <div className="text-[10px] text-muted-foreground">Impr {fmtNum(r.metrics.impressions)}</div>
+                <button
+                  type="button"
+                  onClick={() => { void copyText(metricFmt[metric](r.metrics[metric])); }}
+                  className="font-display font-bold text-gold tabular-nums cursor-copy"
+                  title="Click to copy"
+                >
+                  {metricFmt[metric](r.metrics[metric])}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { void copyText(fmtNum(r.metrics.impressions)); }}
+                  className="text-[10px] text-muted-foreground cursor-copy"
+                  title="Click to copy"
+                >
+                  Impr {fmtNum(r.metrics.impressions)}
+                </button>
               </div>
             </div>
           );

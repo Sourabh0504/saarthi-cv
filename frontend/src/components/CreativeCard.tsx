@@ -1,6 +1,6 @@
 import { ExternalLink, ImageOff } from "lucide-react";
 import { useState } from "react";
-import type { Creative } from "@/data/mockData";
+import type { Creative } from "@/lib/api";
 import { type ComputedMetrics, fmtINR, fmtNum, fmtPct, getYouTubeId } from "@/lib/metrics";
 import { cn } from "@/lib/utils";
 
