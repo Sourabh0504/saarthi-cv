@@ -18,7 +18,10 @@ interface Props {
   structureOnly?: boolean;
   /** Height (px) of each creative row's thumbnail. Min 40, hard cap 1500. */
   creativeRowHeight?: number;
+  /** Click handler when a creative row is clicked (opens detail view). */
+  onCreativeClick?: (creative: Creative) => void;
 }
+
 
 interface AggNode {
   key: string;
@@ -136,7 +139,8 @@ interface HoverState {
   y: number;
 }
 
-export function DirectoryTree({ rows, visibleCols, hierarchy, structureOnly = false, creativeRowHeight = 64 }: Props) {
+export function DirectoryTree({ rows, visibleCols, hierarchy, structureOnly = false, creativeRowHeight = 64, onCreativeClick }: Props) {
+
   const tree = useMemo(() => buildTree(rows, hierarchy), [rows, hierarchy]);
   const grandTotal = useMemo(() => aggregate(rows), [rows]);
   const totalCreatives = rows.length;
