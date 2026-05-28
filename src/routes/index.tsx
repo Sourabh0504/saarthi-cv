@@ -54,7 +54,25 @@ function Portal() {
   const [mode, setMode] = useState<SidebarMode>("report");
 
   const [rowHeight, setRowHeight] = useState<number>(96);
-  const [detailCreative, setDetailCreative] = useState<Creative | null>(null);
+
+  // Detail modal navigation: history stack + cursor
+  const [detailHistory, setDetailHistory] = useState<string[]>([]);
+  const [detailCursor, setDetailCursor] = useState<number>(-1);
+  const detailId = detailCursor >= 0 ? detailHistory[detailCursor] : null;
+  const creativeById = useMemo(() => new Map(creatives.map(c => [c.creative_id, c])), []);
+  const detailCreative = detailId ? creativeById.get(detailId) ?? null : null;
+
+  const openDetail = (c: Creative) => {
+    setDetailHistory(prev => {
+      const trimmed = prev.slice(0, detailCursor + 1);
+      if (trimmed[trimmed.length - 1] === c.creative_id) return trimmed;
+      const next = [...trimmed, c.creative_id].slice(-50);
+      setDetailCursor(next.length - 1);
+      return next;
+    });
+  };
+  const closeDetail = () => { setDetailCursor(-1); setDetailHistory([]); };
+  const navigateDetail = (c: Creative) => openDetail(c);
 
   useEffect(() => {
     const stored = localStorage.getItem("cv-theme") as "dark" | "light" | null;
@@ -64,6 +82,22 @@ function Portal() {
     document.documentElement.classList.toggle("light", theme === "light");
     localStorage.setItem("cv-theme", theme);
   }, [theme]);
+
+  // Load shared view from URL hash on mount
+  useEffect(() => {
+    const shared = readSharedViewFromHash();
+    if (shared) {
+      setFilters(shared.filters);
+      setHierarchy(shared.hierarchy);
+      setColumns(shared.columns);
+      setActiveKey(shared.activeKey);
+      setSelected(new Set(shared.selectedIds));
+      clearShareHash();
+      toast.success("Shared view loaded", { description: shared.name ? `“${shared.name}”` : undefined });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
 
   // Filtered creatives (dimension-level filters)
   const filteredCreatives = useMemo(() => {
