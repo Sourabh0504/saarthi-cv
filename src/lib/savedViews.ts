@@ -12,7 +12,8 @@ export interface SavedView {
   selectedIds: string[];
 }
 
-export type SharedView = Omit<SavedView, "id" | "createdAt">;
+export type SharedView = Omit<SavedView, "id" | "createdAt" | "name"> & { name?: string };
+
 
 const KEY = "cv-saved-views";
 
