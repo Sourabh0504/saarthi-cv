@@ -306,7 +306,8 @@ function Portal() {
                 {visibleRows.length === 0 ? (
                   <EmptyState />
                 ) : (
-                  <DirectoryTree rows={visibleRows} visibleCols={columns} hierarchy={hierarchy} creativeRowHeight={rowHeight} onCreativeClick={setDetailCreative} />
+                  <DirectoryTree rows={visibleRows} visibleCols={columns} hierarchy={hierarchy} creativeRowHeight={rowHeight} onCreativeClick={openDetail} />
+
                 )}
               </TabsContent>
 
@@ -330,7 +331,8 @@ function Portal() {
               {visibleRows.length === 0 ? (
                 <EmptyState />
               ) : (
-                <DirectoryTree rows={visibleRows} visibleCols={columns} hierarchy={hierarchy} structureOnly creativeRowHeight={rowHeight} onCreativeClick={setDetailCreative} />
+                <DirectoryTree rows={visibleRows} visibleCols={columns} hierarchy={hierarchy} structureOnly creativeRowHeight={rowHeight} onCreativeClick={openDetail} />
+
               )}
             </div>
           )}
@@ -340,12 +342,20 @@ function Portal() {
       <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} onPick={handleExportPDF} />
       <CreativeDetailModal
         creative={detailCreative}
-        onClose={() => setDetailCreative(null)}
+        onClose={closeDetail}
         daily={dailyPerformance}
         startDate={filters.startDate}
         endDate={filters.endDate}
         comparisonIds={visibleRows.map(r => r.creative.creative_id)}
+        creativeById={creativeById}
+        hierarchy={hierarchy}
+        onNavigate={navigateDetail}
+        canBack={detailCursor > 0}
+        canForward={detailCursor >= 0 && detailCursor < detailHistory.length - 1}
+        onBack={() => setDetailCursor(c => Math.max(0, c - 1))}
+        onForward={() => setDetailCursor(c => Math.min(detailHistory.length - 1, c + 1))}
       />
+
       <Toaster />
     </div>
   );
