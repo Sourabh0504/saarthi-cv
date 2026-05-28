@@ -12,6 +12,8 @@ import { FilterPanel, type Filters } from "@/components/FilterPanel";
 import { ExportModal } from "@/components/ExportModal";
 import { SavedViewsMenu } from "@/components/SavedViewsMenu";
 import { CreativeDetailModal } from "@/components/CreativeDetailModal";
+import { readSharedViewFromHash, clearShareHash } from "@/lib/savedViews";
+
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
