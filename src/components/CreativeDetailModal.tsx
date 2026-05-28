@@ -1,10 +1,12 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend, ReferenceLine } from "recharts";
 import type { Creative, DailyRow } from "@/data/mockData";
 import { computeMetrics, fmtINR, fmtNum, fmtPct, getYouTubeId } from "@/lib/metrics";
-import { TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, ChevronLeft, ChevronRight, ArrowLeft, ArrowRight, ChevronRight as Chev } from "lucide-react";
+import { DIM_META, type Dim } from "@/lib/hierarchy";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   creative: Creative | null;
@@ -12,8 +14,19 @@ interface Props {
   daily: DailyRow[];
   startDate: string;
   endDate: string;
-  /** all visible creative ids to compute dataset average baseline */
+  /** all visible creative ids to compute dataset average baseline and prev/next */
   comparisonIds: string[];
+  /** map creative_id → Creative for sibling navigation */
+  creativeById: Map<string, Creative>;
+  /** breadcrumb dim path (matches main hierarchy) */
+  hierarchy: Dim[];
+  /** open a different creative (used for prev/next/back/forward + breadcrumb sibling jumps) */
+  onNavigate: (creative: Creative) => void;
+  /** history controls */
+  canBack: boolean;
+  canForward: boolean;
+  onBack: () => void;
+  onForward: () => void;
 }
 
 interface SeriesPoint {
@@ -36,7 +49,6 @@ function buildSeries(daily: DailyRow[], creativeId: string, comparisonIds: strin
   const own = new Map<string, DailyRow>();
   inRange.filter(r => r.creative_id === creativeId).forEach(r => own.set(r.date, r));
 
-  // Daily benchmark = average across comparisonIds (excluding self)
   const otherIds = new Set(comparisonIds.filter(id => id !== creativeId));
   const benchByDate = new Map<string, { ctr: number[]; cpa: number[] }>();
   for (const r of inRange) {
@@ -80,7 +92,10 @@ function Delta({ value, suffix, invert }: { value: number; suffix?: string; inve
   );
 }
 
-export function CreativeDetailModal({ creative, onClose, daily, startDate, endDate, comparisonIds }: Props) {
+export function CreativeDetailModal({
+  creative, onClose, daily, startDate, endDate, comparisonIds, creativeById,
+  hierarchy, onNavigate, canBack, canForward, onBack, onForward,
+}: Props) {
   const series = useMemo(() => {
     if (!creative) return [];
     return buildSeries(daily, creative.creative_id, comparisonIds, startDate, endDate);
@@ -107,6 +122,58 @@ export function CreativeDetailModal({ creative, onClose, daily, startDate, endDa
     };
   }, [series]);
 
+  // Prev/next within comparisonIds order
+  const { prevCreative, nextCreative, position } = useMemo(() => {
+    if (!creative) return { prevCreative: null, nextCreative: null, position: null as null | { i: number; n: number } };
+    const idx = comparisonIds.indexOf(creative.creative_id);
+    if (idx === -1) return { prevCreative: null, nextCreative: null, position: null };
+    const prevId = idx > 0 ? comparisonIds[idx - 1] : null;
+    const nextId = idx < comparisonIds.length - 1 ? comparisonIds[idx + 1] : null;
+    return {
+      prevCreative: prevId ? creativeById.get(prevId) ?? null : null,
+      nextCreative: nextId ? creativeById.get(nextId) ?? null : null,
+      position: { i: idx + 1, n: comparisonIds.length },
+    };
+  }, [creative, comparisonIds, creativeById]);
+
+  // Keyboard nav
+  useEffect(() => {
+    if (!creative) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLElement && ["INPUT", "TEXTAREA"].includes(e.target.tagName)) return;
+      if (e.key === "ArrowLeft" && prevCreative) { e.preventDefault(); onNavigate(prevCreative); }
+      else if (e.key === "ArrowRight" && nextCreative) { e.preventDefault(); onNavigate(nextCreative); }
+      else if ((e.key === "Backspace" || (e.altKey && e.key === "ArrowLeft")) && canBack) { e.preventDefault(); onBack(); }
+      else if (e.altKey && e.key === "ArrowRight" && canForward) { e.preventDefault(); onForward(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [creative, prevCreative, nextCreative, canBack, canForward, onNavigate, onBack, onForward]);
+
+  // Breadcrumb crumbs based on hierarchy
+  const crumbs = useMemo(() => {
+    if (!creative) return [];
+    return hierarchy.map(dim => ({
+      dim,
+      label: DIM_META[dim].label,
+      value: DIM_META[dim].get(creative),
+    }));
+  }, [creative, hierarchy]);
+
+  // Sibling creatives that share all hierarchy values up to a given dim — used when clicking a crumb
+  const jumpToCrumbSibling = (idx: number) => {
+    if (!creative) return;
+    // collect creatives whose first idx+1 dims all match
+    const targetDims = hierarchy.slice(0, idx + 1);
+    const siblings = comparisonIds
+      .map(id => creativeById.get(id))
+      .filter((c): c is Creative => !!c && targetDims.every(d => DIM_META[d].get(c) === DIM_META[d].get(creative)));
+    // step to next sibling after current
+    const i = siblings.findIndex(c => c.creative_id === creative.creative_id);
+    const next = siblings[(i + 1) % siblings.length];
+    if (next && next.creative_id !== creative.creative_id) onNavigate(next);
+  };
+
   if (!creative || !totals) return null;
 
   const ytId = creative.creative_type === "Video" ? getYouTubeId(creative.creative_url) : null;
@@ -117,7 +184,66 @@ export function CreativeDetailModal({ creative, onClose, daily, startDate, endDa
     <Dialog open={!!creative} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="font-display text-xl tracking-tight pr-8">
+          {/* Navigation bar */}
+          <div className="flex items-center gap-1 -mt-1 mb-1 flex-wrap">
+            <Button
+              size="sm" variant="outline" className="h-7 px-2 gap-1"
+              disabled={!canBack} onClick={onBack} title="Back (Backspace / Alt+←)"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" /> Back
+            </Button>
+            <Button
+              size="sm" variant="outline" className="h-7 px-2 gap-1"
+              disabled={!canForward} onClick={onForward} title="Forward (Alt+→)"
+            >
+              Forward <ArrowRight className="w-3.5 h-3.5" />
+            </Button>
+            <div className="ml-2 flex items-center gap-1">
+              <Button
+                size="icon" variant="outline" className="h-7 w-7"
+                disabled={!prevCreative}
+                onClick={() => prevCreative && onNavigate(prevCreative)}
+                title={prevCreative ? `Previous: ${prevCreative.headline ?? prevCreative.creative_id} (←)` : "No previous"}
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              {position && (
+                <span className="text-[11px] tabular-nums text-muted-foreground px-1.5">
+                  {position.i} / {position.n}
+                </span>
+              )}
+              <Button
+                size="icon" variant="outline" className="h-7 w-7"
+                disabled={!nextCreative}
+                onClick={() => nextCreative && onNavigate(nextCreative)}
+                title={nextCreative ? `Next: ${nextCreative.headline ?? nextCreative.creative_id} (→)` : "No next"}
+              >
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+
+          {/* Breadcrumb */}
+          <div className="flex items-center gap-1 text-[11px] text-muted-foreground flex-wrap pr-8">
+            {crumbs.map((c, i) => (
+              <span key={c.dim} className="flex items-center gap-1">
+                <button
+                  onClick={() => jumpToCrumbSibling(i)}
+                  className="hover:text-gold transition truncate max-w-[160px]"
+                  title={`Cycle creatives in this ${c.label}`}
+                >
+                  <span className="uppercase tracking-widest text-[9px] mr-1 opacity-60">{c.label}</span>
+                  {c.value}
+                </button>
+                <Chev className="w-3 h-3 opacity-40" />
+              </span>
+            ))}
+            <span className="text-foreground font-medium truncate max-w-[240px]">
+              {creative.headline ?? creative.creative_id}
+            </span>
+          </div>
+
+          <DialogTitle className="font-display text-xl tracking-tight pr-8 pt-1">
             {creative.headline ?? creative.creative_id}
           </DialogTitle>
           <div className="text-xs text-muted-foreground flex flex-wrap gap-1.5 pt-1">
@@ -130,7 +256,6 @@ export function CreativeDetailModal({ creative, onClose, daily, startDate, endDa
         </DialogHeader>
 
         <div className="grid md:grid-cols-[200px_1fr] gap-4 pt-2">
-          {/* Preview */}
           <div className="aspect-square rounded-xl overflow-hidden border border-border bg-muted/40">
             {creative.creative_type === "Image" && (
               <img src={creative.creative_url} alt="" className="w-full h-full object-cover" />
@@ -146,7 +271,6 @@ export function CreativeDetailModal({ creative, onClose, daily, startDate, endDa
             )}
           </div>
 
-          {/* KPI grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             <Stat label="Impressions" value={fmtNum(totals.impressions)} />
             <Stat label="Clicks" value={fmtNum(totals.clicks)} />
@@ -159,7 +283,6 @@ export function CreativeDetailModal({ creative, onClose, daily, startDate, endDa
           </div>
         </div>
 
-        {/* Charts */}
         <div className="grid lg:grid-cols-2 gap-4 pt-2">
           <ChartCard title="CTR vs. dataset avg" suffix="%">
             <LineChart data={series}>

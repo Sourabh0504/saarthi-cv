@@ -12,6 +12,8 @@ import { FilterPanel, type Filters } from "@/components/FilterPanel";
 import { ExportModal } from "@/components/ExportModal";
 import { SavedViewsMenu } from "@/components/SavedViewsMenu";
 import { CreativeDetailModal } from "@/components/CreativeDetailModal";
+import { readSharedViewFromHash, clearShareHash } from "@/lib/savedViews";
+
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -54,7 +56,25 @@ function Portal() {
   const [mode, setMode] = useState<SidebarMode>("report");
 
   const [rowHeight, setRowHeight] = useState<number>(96);
-  const [detailCreative, setDetailCreative] = useState<Creative | null>(null);
+
+  // Detail modal navigation: history stack + cursor
+  const [detailHistory, setDetailHistory] = useState<string[]>([]);
+  const [detailCursor, setDetailCursor] = useState<number>(-1);
+  const detailId = detailCursor >= 0 ? detailHistory[detailCursor] : null;
+  const creativeById = useMemo(() => new Map(creatives.map(c => [c.creative_id, c])), []);
+  const detailCreative = detailId ? creativeById.get(detailId) ?? null : null;
+
+  const openDetail = (c: Creative) => {
+    setDetailHistory(prev => {
+      const trimmed = prev.slice(0, detailCursor + 1);
+      if (trimmed[trimmed.length - 1] === c.creative_id) return trimmed;
+      const next = [...trimmed, c.creative_id].slice(-50);
+      setDetailCursor(next.length - 1);
+      return next;
+    });
+  };
+  const closeDetail = () => { setDetailCursor(-1); setDetailHistory([]); };
+  const navigateDetail = (c: Creative) => openDetail(c);
 
   useEffect(() => {
     const stored = localStorage.getItem("cv-theme") as "dark" | "light" | null;
@@ -64,6 +84,22 @@ function Portal() {
     document.documentElement.classList.toggle("light", theme === "light");
     localStorage.setItem("cv-theme", theme);
   }, [theme]);
+
+  // Load shared view from URL hash on mount
+  useEffect(() => {
+    const shared = readSharedViewFromHash();
+    if (shared) {
+      setFilters(shared.filters);
+      setHierarchy(shared.hierarchy);
+      setColumns(shared.columns);
+      setActiveKey(shared.activeKey);
+      setSelected(new Set(shared.selectedIds));
+      clearShareHash();
+      toast.success("Shared view loaded", { description: shared.name ? `“${shared.name}”` : undefined });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
 
   // Filtered creatives (dimension-level filters)
   const filteredCreatives = useMemo(() => {
@@ -270,7 +306,8 @@ function Portal() {
                 {visibleRows.length === 0 ? (
                   <EmptyState />
                 ) : (
-                  <DirectoryTree rows={visibleRows} visibleCols={columns} hierarchy={hierarchy} creativeRowHeight={rowHeight} onCreativeClick={setDetailCreative} />
+                  <DirectoryTree rows={visibleRows} visibleCols={columns} hierarchy={hierarchy} creativeRowHeight={rowHeight} onCreativeClick={openDetail} />
+
                 )}
               </TabsContent>
 
@@ -294,7 +331,8 @@ function Portal() {
               {visibleRows.length === 0 ? (
                 <EmptyState />
               ) : (
-                <DirectoryTree rows={visibleRows} visibleCols={columns} hierarchy={hierarchy} structureOnly creativeRowHeight={rowHeight} onCreativeClick={setDetailCreative} />
+                <DirectoryTree rows={visibleRows} visibleCols={columns} hierarchy={hierarchy} structureOnly creativeRowHeight={rowHeight} onCreativeClick={openDetail} />
+
               )}
             </div>
           )}
@@ -304,12 +342,20 @@ function Portal() {
       <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} onPick={handleExportPDF} />
       <CreativeDetailModal
         creative={detailCreative}
-        onClose={() => setDetailCreative(null)}
+        onClose={closeDetail}
         daily={dailyPerformance}
         startDate={filters.startDate}
         endDate={filters.endDate}
         comparisonIds={visibleRows.map(r => r.creative.creative_id)}
+        creativeById={creativeById}
+        hierarchy={hierarchy}
+        onNavigate={navigateDetail}
+        canBack={detailCursor > 0}
+        canForward={detailCursor >= 0 && detailCursor < detailHistory.length - 1}
+        onBack={() => setDetailCursor(c => Math.max(0, c - 1))}
+        onForward={() => setDetailCursor(c => Math.min(detailHistory.length - 1, c + 1))}
       />
+
       <Toaster />
     </div>
   );
