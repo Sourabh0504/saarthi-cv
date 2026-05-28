@@ -185,6 +185,10 @@ export function DirectoryTree({ rows, visibleCols, hierarchy, structureOnly = fa
     const isCreative = node.dim === "creative";
     const isTop = node.depth === 0;
     const isSecond = node.depth === 1;
+    const Icon = isCreative ? Sparkles : DIM_META[node.dim as Dim].icon;
+
+    return (
+      <Fragment key={node.key}>
         <tr
           className={cn(
             "border-b border-white/5 transition-colors group",
@@ -201,10 +205,6 @@ export function DirectoryTree({ rows, visibleCols, hierarchy, structureOnly = fa
           }
         >
 
-            hasChildren && "cursor-pointer",
-          )}
-          onClick={hasChildren ? () => toggle(node.key) : undefined}
-        >
           <td className="py-2.5 pr-3 align-middle" style={{ paddingLeft: indentPx(node.depth) }}>
             <div className="flex items-center gap-3 min-w-0">
               <span className={cn(
