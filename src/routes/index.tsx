@@ -310,9 +310,11 @@ function Portal() {
         endDate={filters.endDate}
         comparisonIds={visibleRows.map(r => r.creative.creative_id)}
       />
-
+      <Toaster />
     </div>
   );
+}
+
 }
 
 function KPI({ icon: Icon, label, value, accent }: { icon: React.ComponentType<{ className?: string }>; label: string; value: string; accent?: boolean }) {
