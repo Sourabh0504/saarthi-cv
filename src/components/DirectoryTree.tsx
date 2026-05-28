@@ -185,17 +185,22 @@ export function DirectoryTree({ rows, visibleCols, hierarchy, structureOnly = fa
     const isCreative = node.dim === "creative";
     const isTop = node.depth === 0;
     const isSecond = node.depth === 1;
-    const Icon = isCreative ? Sparkles : DIM_META[node.dim as Dim].icon;
-
-    return (
-      <Fragment key={node.key}>
         <tr
           className={cn(
             "border-b border-white/5 transition-colors group",
             isTop && "bg-gold/[0.06] hover:bg-gold/10 border-l-4 border-l-gold",
             isSecond && "bg-white/[0.03] hover:bg-white/[0.05]",
             !isTop && !isSecond && !isCreative && "hover:bg-white/[0.03]",
-            isCreative && "hover:bg-white/[0.04]",
+            isCreative && "hover:bg-gold/[0.05] cursor-pointer",
+            hasChildren && "cursor-pointer",
+          )}
+          onClick={
+            hasChildren ? () => toggle(node.key)
+              : isCreative && node.creative && onCreativeClick ? () => onCreativeClick(node.creative!)
+              : undefined
+          }
+        >
+
             hasChildren && "cursor-pointer",
           )}
           onClick={hasChildren ? () => toggle(node.key) : undefined}
