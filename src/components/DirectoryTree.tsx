@@ -18,7 +18,10 @@ interface Props {
   structureOnly?: boolean;
   /** Height (px) of each creative row's thumbnail. Min 40, hard cap 1500. */
   creativeRowHeight?: number;
+  /** Click handler when a creative row is clicked (opens detail view). */
+  onCreativeClick?: (creative: Creative) => void;
 }
+
 
 interface AggNode {
   key: string;
@@ -136,7 +139,8 @@ interface HoverState {
   y: number;
 }
 
-export function DirectoryTree({ rows, visibleCols, hierarchy, structureOnly = false, creativeRowHeight = 64 }: Props) {
+export function DirectoryTree({ rows, visibleCols, hierarchy, structureOnly = false, creativeRowHeight = 64, onCreativeClick }: Props) {
+
   const tree = useMemo(() => buildTree(rows, hierarchy), [rows, hierarchy]);
   const grandTotal = useMemo(() => aggregate(rows), [rows]);
   const totalCreatives = rows.length;
@@ -191,11 +195,16 @@ export function DirectoryTree({ rows, visibleCols, hierarchy, structureOnly = fa
             isTop && "bg-gold/[0.06] hover:bg-gold/10 border-l-4 border-l-gold",
             isSecond && "bg-white/[0.03] hover:bg-white/[0.05]",
             !isTop && !isSecond && !isCreative && "hover:bg-white/[0.03]",
-            isCreative && "hover:bg-white/[0.04]",
+            isCreative && "hover:bg-gold/[0.05] cursor-pointer",
             hasChildren && "cursor-pointer",
           )}
-          onClick={hasChildren ? () => toggle(node.key) : undefined}
+          onClick={
+            hasChildren ? () => toggle(node.key)
+              : isCreative && node.creative && onCreativeClick ? () => onCreativeClick(node.creative!)
+              : undefined
+          }
         >
+
           <td className="py-2.5 pr-3 align-middle" style={{ paddingLeft: indentPx(node.depth) }}>
             <div className="flex items-center gap-3 min-w-0">
               <span className={cn(

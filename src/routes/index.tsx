@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState, useEffect } from "react";
 import { Gem, Sparkles, Moon, Sun, LayoutGrid, Trophy, Database, IndianRupee, MousePointerClick, Eye, Target, PanelLeftClose, PanelLeftOpen, Network, Maximize2 } from "lucide-react";
-import { creatives, dailyPerformance, cities } from "@/data/mockData";
+import { creatives, dailyPerformance, cities, type Creative } from "@/data/mockData";
 import { computeMetrics, fmtINR, fmtNum, fmtPct, type ComputedMetrics } from "@/lib/metrics";
 import { GroupingSidebar, type SidebarMode } from "@/components/GroupingSidebar";
 import { type Dim, DEFAULT_HIERARCHY } from "@/lib/hierarchy";
@@ -10,6 +10,8 @@ import { DirectoryTree } from "@/components/DirectoryTree";
 import { TopPerformers } from "@/components/TopPerformers";
 import { FilterPanel, type Filters } from "@/components/FilterPanel";
 import { ExportModal } from "@/components/ExportModal";
+import { SavedViewsMenu } from "@/components/SavedViewsMenu";
+import { CreativeDetailModal } from "@/components/CreativeDetailModal";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -50,7 +52,9 @@ function Portal() {
   const [exportOpen, setExportOpen] = useState(false);
   const [rankMetric, setRankMetric] = useState<"ctr" | "conversions" | "cpc" | "cpa">("ctr");
   const [mode, setMode] = useState<SidebarMode>("report");
+
   const [rowHeight, setRowHeight] = useState<number>(96);
+  const [detailCreative, setDetailCreative] = useState<Creative | null>(null);
 
   useEffect(() => {
     const stored = localStorage.getItem("cv-theme") as "dark" | "light" | null;
@@ -216,14 +220,31 @@ function Portal() {
             </div>
           </div>
 
-          <FilterPanel filters={filters} setFilters={setFilters} cities={cities}
-            columns={columns} setColumns={setColumns}
-            onExportPDF={() => setExportOpen(true)} onExportCSV={handleExportCSV} />
-
-          {mode === "report" && (
-            <>
-              {/* KPI summary */}
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          {/* Sticky filter + KPI strip */}
+          <div className="sticky top-[60px] z-20 -mx-6 px-6 pt-1 pb-3 backdrop-blur-xl bg-background/70 border-b border-white/5 space-y-3 no-print">
+            <FilterPanel
+              filters={filters}
+              setFilters={setFilters}
+              cities={cities}
+              columns={columns}
+              setColumns={setColumns}
+              onExportPDF={() => setExportOpen(true)}
+              onExportCSV={handleExportCSV}
+              rightSlot={
+                <SavedViewsMenu
+                  current={{ filters, hierarchy, columns, activeKey, selectedIds: Array.from(selected) }}
+                  onLoad={(v) => {
+                    setFilters(v.filters);
+                    setHierarchy(v.hierarchy);
+                    setColumns(v.columns);
+                    setActiveKey(v.activeKey);
+                    setSelected(new Set(v.selectedIds));
+                  }}
+                />
+              }
+            />
+            {mode === "report" && (
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
                 <KPI icon={Eye} label="Impressions" value={fmtNum(totals.impressions)} />
                 <KPI icon={MousePointerClick} label="Clicks" value={fmtNum(totals.clicks)} />
                 <KPI icon={IndianRupee} label="Spend" value={fmtINR(totals.cost)} accent />
@@ -231,39 +252,41 @@ function Portal() {
                 <KPI icon={Sparkles} label="CTR" value={fmtPct(totals.ctr)} />
                 <KPI icon={Database} label="CPA" value={fmtINR(totals.cpa)} />
               </div>
+            )}
+          </div>
 
-              <Tabs defaultValue="directory" className="w-full">
-                <TabsList className="bg-accent/40 no-print">
-                  <TabsTrigger value="directory" className="gap-2 data-[state=active]:bg-gold-gradient data-[state=active]:text-primary-foreground">
-                    <LayoutGrid className="w-4 h-4" /> Creative Directory
-                  </TabsTrigger>
-                  <TabsTrigger value="top" className="gap-2 data-[state=active]:bg-gold-gradient data-[state=active]:text-primary-foreground">
-                    <Trophy className="w-4 h-4" /> Top Performers
-                  </TabsTrigger>
-                </TabsList>
+          {mode === "report" && (
+            <Tabs defaultValue="directory" className="w-full">
+              <TabsList className="bg-accent/40 no-print">
+                <TabsTrigger value="directory" className="gap-2 data-[state=active]:bg-gold-gradient data-[state=active]:text-primary-foreground">
+                  <LayoutGrid className="w-4 h-4" /> Creative Directory
+                </TabsTrigger>
+                <TabsTrigger value="top" className="gap-2 data-[state=active]:bg-gold-gradient data-[state=active]:text-primary-foreground">
+                  <Trophy className="w-4 h-4" /> Top Performers
+                </TabsTrigger>
+              </TabsList>
 
-                <TabsContent value="directory" className="mt-5 print-area">
-                  {visibleRows.length === 0 ? (
-                    <EmptyState />
-                  ) : (
-                    <DirectoryTree rows={visibleRows} visibleCols={columns} hierarchy={hierarchy} creativeRowHeight={rowHeight} />
-                  )}
-                </TabsContent>
+              <TabsContent value="directory" className="mt-5 print-area">
+                {visibleRows.length === 0 ? (
+                  <EmptyState />
+                ) : (
+                  <DirectoryTree rows={visibleRows} visibleCols={columns} hierarchy={hierarchy} creativeRowHeight={rowHeight} onCreativeClick={setDetailCreative} />
+                )}
+              </TabsContent>
 
-                <TabsContent value="top" className="mt-5">
-                  <div className="flex items-center gap-2 mb-4 no-print">
-                    <span className="text-sm text-muted-foreground">Rank by:</span>
-                    {(["ctr", "conversions", "cpc", "cpa"] as const).map(m => (
-                      <button key={m} onClick={() => setRankMetric(m)}
-                        className={`text-xs px-3 py-1.5 rounded-full border transition uppercase tracking-wider font-medium ${
-                          rankMetric === m ? "bg-gold-gradient text-primary-foreground border-transparent" : "border-border hover:border-gold/50"
-                        }`}>{m}</button>
-                    ))}
-                  </div>
-                  <TopPerformers rows={visibleRows} metric={rankMetric} />
-                </TabsContent>
-              </Tabs>
-            </>
+              <TabsContent value="top" className="mt-5">
+                <div className="flex items-center gap-2 mb-4 no-print">
+                  <span className="text-sm text-muted-foreground">Rank by:</span>
+                  {(["ctr", "conversions", "cpc", "cpa"] as const).map(m => (
+                    <button key={m} onClick={() => setRankMetric(m)}
+                      className={`text-xs px-3 py-1.5 rounded-full border transition uppercase tracking-wider font-medium ${
+                        rankMetric === m ? "bg-gold-gradient text-primary-foreground border-transparent" : "border-border hover:border-gold/50"
+                      }`}>{m}</button>
+                  ))}
+                </div>
+                <TopPerformers rows={visibleRows} metric={rankMetric} />
+              </TabsContent>
+            </Tabs>
           )}
 
           {mode === "structure" && (
@@ -271,7 +294,7 @@ function Portal() {
               {visibleRows.length === 0 ? (
                 <EmptyState />
               ) : (
-                <DirectoryTree rows={visibleRows} visibleCols={columns} hierarchy={hierarchy} structureOnly creativeRowHeight={rowHeight} />
+                <DirectoryTree rows={visibleRows} visibleCols={columns} hierarchy={hierarchy} structureOnly creativeRowHeight={rowHeight} onCreativeClick={setDetailCreative} />
               )}
             </div>
           )}
@@ -279,10 +302,20 @@ function Portal() {
       </div>
 
       <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} onPick={handleExportPDF} />
+      <CreativeDetailModal
+        creative={detailCreative}
+        onClose={() => setDetailCreative(null)}
+        daily={dailyPerformance}
+        startDate={filters.startDate}
+        endDate={filters.endDate}
+        comparisonIds={visibleRows.map(r => r.creative.creative_id)}
+      />
       <Toaster />
     </div>
   );
 }
+
+
 
 function KPI({ icon: Icon, label, value, accent }: { icon: React.ComponentType<{ className?: string }>; label: string; value: string; accent?: boolean }) {
   return (

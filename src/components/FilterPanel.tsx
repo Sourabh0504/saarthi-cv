@@ -20,7 +20,9 @@ interface Props {
   setColumns: (c: Record<string, boolean>) => void;
   onExportPDF: () => void;
   onExportCSV: () => void;
+  rightSlot?: React.ReactNode;
 }
+
 
 const colOptions = [
   { key: "impressions", label: "Impressions" },
@@ -34,7 +36,8 @@ const colOptions = [
   { key: "cpa", label: "CPA" },
 ];
 
-export function FilterPanel({ filters, setFilters, cities, columns, setColumns, onExportPDF, onExportCSV }: Props) {
+export function FilterPanel({ filters, setFilters, cities, columns, setColumns, onExportPDF, onExportCSV, rightSlot }: Props) {
+
   const update = <K extends keyof Filters>(k: K, v: Filters[K]) => setFilters({ ...filters, [k]: v });
 
   return (
@@ -78,6 +81,7 @@ export function FilterPanel({ filters, setFilters, cities, columns, setColumns, 
         </PopoverContent>
       </Popover>
 
+      {rightSlot}
       <Button variant="outline" size="sm" onClick={onExportCSV} className="gap-2"><FileDown className="w-4 h-4" /> CSV</Button>
       <Button size="sm" onClick={onExportPDF} className="gap-2 bg-gold-gradient text-primary-foreground hover:opacity-90">
         <FileText className="w-4 h-4" /> Export PDF
@@ -85,6 +89,8 @@ export function FilterPanel({ filters, setFilters, cities, columns, setColumns, 
     </div>
   );
 }
+
+
 
 function Select({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: { v: string; l: string }[] }) {
   return (
