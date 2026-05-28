@@ -40,6 +40,15 @@ function doGet(e) {
   try {
     var params = e.parameter || {};
 
+    // ── Current Structure shortcut ──────────────────────────────────────────
+    // ?tab=current_structure → reads Current_Pmax + Current_Dgen sheets
+    // and returns the live campaign structure (no performance data).
+    var tab = params.tab ? String(params.tab).trim().toLowerCase() : "";
+    if (tab === "current_structure") {
+      var ss = SpreadsheetApp.getActiveSpreadsheet();
+      return handleCurrentStructure(ss);
+    }
+
     // Date range defaults:
     // If start/end not provided, use the sheet's actual min/max dates.
     var startStr = params.start ? String(params.start).trim() : "";
@@ -537,6 +546,164 @@ function errorResponse(msg) {
   return ContentService
     .createTextOutput(JSON.stringify({ status: "error", message: msg }))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+
+// =============================================================
+// CURRENT STRUCTURE — reads Current_Pmax + Current_Dgen
+// =============================================================
+
+/**
+ * Handler for ?tab=current_structure.
+ * Reads both sheets, builds the creative list, caches it (10 min),
+ * and returns a JSON response.
+ */
+function handleCurrentStructure(ss) {
+  var scriptCache = CacheService.getScriptCache();
+  var cacheKey    = "cv_current_structure";
+
+  var cachedStr = getCachedPayload(scriptCache, cacheKey);
+  if (cachedStr) {
+    return ContentService
+      .createTextOutput(cachedStr)
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  var creatives   = readCurrentStructure(ss);
+  var filterOpts  = deriveFilterOptions(creatives);
+
+  var payload = {
+    status:         "ok",
+    count:          creatives.length,
+    creatives:      creatives,
+    filter_options: filterOpts,
+  };
+
+  var payloadStr = JSON.stringify(payload);
+  try { cachePayload(scriptCache, cacheKey, payloadStr, 600); } catch (ce) {}
+
+  return ContentService
+    .createTextOutput(payloadStr)
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * Reads Current_Pmax and Current_Dgen sheets.
+ * Expands each row into one Creative object per Video ID found.
+ * Returns a unified array of Creative objects (no performance data).
+ */
+function readCurrentStructure(ss) {
+  var creatives = [];
+
+  // ── Current_Pmax ──────────────────────────────────────────────────────────
+  var pmaxSheet = ss.getSheetByName("Current_Pmax");
+  if (pmaxSheet && pmaxSheet.getLastRow() > 1) {
+    var pmaxData    = pmaxSheet.getRange(1, 1, pmaxSheet.getLastRow(), pmaxSheet.getLastColumn()).getValues();
+    var pmaxHeaders = pmaxData[0].map(function(h) { return String(h).trim(); });
+    var ph = {};
+    pmaxHeaders.forEach(function(h, i) { ph[h] = i; });
+
+    for (var r = 1; r < pmaxData.length; r++) {
+      var row = pmaxData[r];
+      var campaign = String(row[ph["Campaign"]] || "").trim();
+      if (!campaign) continue;
+
+      var campaignType  = String(row[ph["Campaign_Type"]]      || "PMax").trim();
+      var location      = String(row[ph["Location"]]           || "").trim();
+      var funnel        = String(row[ph["Funnel"]]             || "TOFU").trim();
+      var assetGroup    = String(row[ph["Asset Group"]]        || "").trim();
+      var headline1     = String(row[ph["Headline 1"]]         || "").trim();
+      var description1  = String(row[ph["Description 1"]]     || "").trim();
+      var statusRaw     = row[ph["Asset Group Status"]] !== undefined
+        ? String(row[ph["Asset Group Status"]] || "").trim()
+        : String(row[ph["Campaign Status"]]    || "Enabled").trim();
+
+      // Expand Video IDs 1–15 (each non-empty Video ID = 1 creative card)
+      for (var v = 1; v <= 15; v++) {
+        var vidKey  = "Video ID " + v;
+        if (ph[vidKey] === undefined) continue;
+        var videoId = String(row[ph[vidKey]] || "").trim();
+        if (!videoId) continue;
+
+        var creativeUrl = "https://www.youtube.com/watch?v=" + videoId;
+        var creativeId  = "pmax|" + campaign + "|" + location + "|" + assetGroup + "|" + videoId;
+
+        creatives.push({
+          creative_id:    creativeId,
+          creative_url:   creativeUrl,
+          creative_type:  "Video",
+          campaign_name:  campaign,
+          campaign_type:  campaignType,
+          city:           location,
+          funnel:         funnel,
+          ad_group:       assetGroup,
+          headline:       headline1,
+          description:    description1,
+          age_group:      "",
+          category:       "",
+          status:         normalizeStatus(statusRaw),
+          source_sheet:   "Current_Pmax",
+        });
+      }
+    }
+  }
+
+  // ── Current_Dgen ──────────────────────────────────────────────────────────
+  var dgenSheet = ss.getSheetByName("Current_Dgen");
+  if (dgenSheet && dgenSheet.getLastRow() > 1) {
+    var dgenData    = dgenSheet.getRange(1, 1, dgenSheet.getLastRow(), dgenSheet.getLastColumn()).getValues();
+    var dgenHeaders = dgenData[0].map(function(h) { return String(h).trim(); });
+    var dh = {};
+    dgenHeaders.forEach(function(h, i) { dh[h] = i; });
+
+    for (var r = 1; r < dgenData.length; r++) {
+      var row = dgenData[r];
+      var campaign = String(row[dh["Campaign"]] || "").trim();
+      if (!campaign) continue;
+
+      var campaignType  = String(row[dh["Campaign_Type"]]    || "DGen").trim();
+      var location      = String(row[dh["Location"]]         || "").trim();
+      var funnel        = String(row[dh["Funnel"]]           || "TOFU").trim();
+      var adGroup       = String(row[dh["Ad Group"]]         || "").trim();
+      var adName        = String(row[dh["Ad Name"]]          || "").trim();
+      var headline1     = String(row[dh["Headline 1"]]       || "").trim();
+      var description1  = String(row[dh["Description 1"]]   || "").trim();
+      // DGen has a dedicated "Status" column for the ad; fall back to Ad Group Status
+      var statusRaw     = row[dh["Status"]] !== undefined
+        ? String(row[dh["Status"]] || "").trim()
+        : String(row[dh["Ad Group Status"]] || "Enabled").trim();
+
+      // Expand Video IDs 1–5 (each non-empty Video ID = 1 creative card)
+      for (var v = 1; v <= 5; v++) {
+        var vidKey  = "Video ID " + v;
+        if (dh[vidKey] === undefined) continue;
+        var videoId = String(row[dh[vidKey]] || "").trim();
+        if (!videoId) continue;
+
+        var creativeUrl = "https://www.youtube.com/watch?v=" + videoId;
+        var creativeId  = "dgen|" + campaign + "|" + location + "|" + (adGroup || adName) + "|" + videoId;
+
+        creatives.push({
+          creative_id:    creativeId,
+          creative_url:   creativeUrl,
+          creative_type:  "Video",
+          campaign_name:  campaign,
+          campaign_type:  campaignType,
+          city:           location,
+          funnel:         funnel,
+          ad_group:       adGroup || adName,
+          headline:       headline1,
+          description:    description1,
+          age_group:      "",
+          category:       "",
+          status:         normalizeStatus(statusRaw),
+          source_sheet:   "Current_Dgen",
+        });
+      }
+    }
+  }
+
+  return creatives;
 }
 
 

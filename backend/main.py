@@ -25,7 +25,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 import cache as cache_module
-from apps_script_connector import fetch_data
+from apps_script_connector import fetch_data, fetch_current_structure
 from calculator import top_performers
 from config import ALLOWED_ORIGINS
 
@@ -196,6 +196,29 @@ async def get_top_performers(
         "filters":     {"type": type, "city": city},
         "count":       len(results),
         "results":     results,
+    }
+
+
+@app.get("/api/current-structure", tags=["Data"])
+async def get_current_structure():
+    """
+    Return the current live campaign structure from Current_Pmax + Current_Dgen Sheet tabs.
+
+    No performance data — this shows every video creative currently configured
+    in the campaigns, regardless of whether it has run yet.
+    Result is cached (10 min TTL on the Apps Script side; 15 min on the Python side).
+    """
+    try:
+        data = await fetch_current_structure()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Apps Script fetch failed: {exc}")
+
+    return {
+        "status":            "ok",
+        "served_from_cache": data["served_from_cache"],
+        "count":             data["count"],
+        "creatives":         data["creatives"],
+        "filter_options":    data["filter_options"],
     }
 
 

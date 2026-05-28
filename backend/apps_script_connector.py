@@ -124,3 +124,47 @@ def _to_float(value) -> float:
         return float(value) if value not in (None, "", " ") else 0.0
     except (TypeError, ValueError):
         return 0.0
+
+
+async def fetch_current_structure() -> dict:
+    """
+    Fetch the current live campaign structure from Current_Pmax + Current_Dgen Sheet tabs.
+
+    Calls Apps Script with ?tab=current_structure.  No performance data is
+    returned — this is a purely structural / planning view.
+
+    Returns a dict with shape:
+    {
+      "served_from_cache": bool,
+      "creatives": [...],      ← one entry per Video ID per sheet row
+      "filter_options": {...}, ← dynamic from sheet data
+      "count": int,
+    }
+    """
+    cache_key = "current_structure"
+
+    cached = cache_module.get_cached(cache_key)
+    if cached is not None:
+        return {**cached, "served_from_cache": True}
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.get(
+            get_apps_script_url(),
+            params={"tab": "current_structure"},
+            follow_redirects=True,
+        )
+        resp.raise_for_status()
+        raw = resp.json()
+
+    if raw.get("status") != "ok":
+        raise ValueError(f"Apps Script returned error: {raw.get('message', 'unknown')}")
+
+    result = {
+        "served_from_cache": False,
+        "creatives":         raw.get("creatives", []),
+        "filter_options":    raw.get("filter_options", {}),
+        "count":             raw.get("count", 0),
+    }
+
+    cache_module.set_cached(cache_key, result)
+    return result

@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 
 // ── API ───────────────────────────────────────────────────────────────────────
-import { fetchPerformance, syncCache, type Creative, type FilterOptions } from "@/lib/api";
+import { fetchPerformance, fetchCurrentStructure, syncCache, type Creative, type FilterOptions } from "@/lib/api";
 
 // ── Lib ───────────────────────────────────────────────────────────────────────
 import { computeMetrics, fmtINR, fmtINR0, fmtNum, fmtPct, type ComputedMetrics } from "@/lib/metrics";
@@ -82,6 +82,12 @@ function Portal() {
   const [loading, setLoading]   = useState(true);
   const [syncing, setSyncing]   = useState(false);
   const [error, setError]       = useState<string | null>(null);
+
+  // ── Current Structure State ─────────────────────────────────────
+  const [structureCreatives, setStructureCreatives] = useState<Creative[]>([]);
+  const [structureLoading, setStructureLoading]     = useState(false);
+  const [structureError, setStructureError]         = useState<string | null>(null);
+  const structureFetched = useRef(false); // fetch once per session
 
   // Auto-sets date pickers to sheet's actual date range on first load (once only)
   const datesInitialized = useRef(false);
@@ -207,6 +213,9 @@ function Portal() {
   // ── Force sync ────────────────────────────────────────────────────────────
   const handleSync = async () => {
     setSyncing(true);
+    // Also clear structure cache so next switch re-fetches
+    structureFetched.current = false;
+    setStructureCreatives([]);
     try {
       await syncCache();
       await loadData(filters.startDate, filters.endDate, filters.status);
@@ -217,6 +226,29 @@ function Portal() {
       setSyncing(false);
     }
   };
+
+  // ── Fetch Current Structure when mode switches ──────────────────────
+  useEffect(() => {
+    if (mode !== "structure") return;
+    if (structureFetched.current) return; // already have data
+    structureFetched.current = true;
+    setStructureLoading(true);
+    setStructureError(null);
+    fetchCurrentStructure()
+      .then(data => {
+        setStructureCreatives(data.creatives);
+        if (data.served_from_cache) {
+          toast.info("Structure served from cache", { description: "Up to 15 min old. Hit sync to refresh." });
+        }
+      })
+      .catch(err => {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        setStructureError(msg);
+        toast.error("Failed to load current structure", { description: msg });
+        structureFetched.current = false; // allow retry
+      })
+      .finally(() => setStructureLoading(false));
+  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Filtered creatives (dimension-level) ──────────────────────────────────
   const filteredCreatives = useMemo(() => {
@@ -538,11 +570,46 @@ function Portal() {
 
           {!loading && mode === "structure" && (
             <div className="print-area">
-              {visibleRows.length === 0 ? <EmptyState /> : (
+              {/* Structure loading skeleton */}
+              {structureLoading && (
+                <div className="space-y-3 animate-pulse">
+                  {[...Array(4)].map((_, i) => (
+                    <div key={i} className="glass rounded-xl h-28 opacity-50" />
+                  ))}
+                </div>
+              )}
+              {/* Structure error banner */}
+              {structureError && !structureLoading && (
+                <div className="flex items-center gap-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">
+                  <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                  <span className="text-red-300 flex-1">{structureError}</span>
+                  <Button
+                    size="sm" variant="outline"
+                    className="border-red-500/30 text-red-300 hover:bg-red-500/10"
+                    onClick={() => {
+                      structureFetched.current = false;
+                      setStructureError(null);
+                      // re-trigger the useEffect by momentarily flipping mode
+                      setMode("report");
+                      setTimeout(() => setMode("structure"), 50);
+                    }}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              )}
+              {!structureLoading && !structureError && structureCreatives.length === 0 && <EmptyState />}
+              {!structureLoading && !structureError && structureCreatives.length > 0 && (
                 <DirectoryTree
-                  rows={visibleRows} visibleCols={columns}
-                  hierarchy={hierarchy} structureOnly
-                  creativeRowHeight={rowHeight} onCreativeClick={openDetail}
+                  rows={structureCreatives.map(c => ({
+                    creative: c,
+                    metrics: computeMetrics({ impressions: 0, clicks: 0, cost: 0, conversions: 0 }),
+                  }))}
+                  visibleCols={columns}
+                  hierarchy={hierarchy}
+                  structureOnly
+                  creativeRowHeight={rowHeight}
+                  onCreativeClick={openDetail}
                 />
               )}
             </div>

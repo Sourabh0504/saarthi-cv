@@ -28,6 +28,8 @@ export interface Creative {
   headline?:      string;
   description?:   string;
   status:         "Enabled" | "Paused";
+  // Which sheet this creative came from (present on /api/current-structure)
+  source_sheet?:  "Current_Pmax" | "Current_Dgen";
   // Performance (present on /api/performance responses)
   impressions?:   number;
   clicks?:        number;
@@ -145,4 +147,25 @@ export async function syncCache(): Promise<{ status: string; message: string }> 
  */
 export async function healthCheck(): Promise<{ status: string }> {
   return apiFetch<{ status: string }>("/health");
+}
+
+// ────────────────────────────────────────────────────────────────────────────────
+// Current Structure
+// ────────────────────────────────────────────────────────────────────────────────
+
+export interface CurrentStructureResponse {
+  status:            "ok";
+  served_from_cache: boolean;
+  count:             number;
+  creatives:         Creative[];
+  filter_options:    FilterOptions;
+}
+
+/**
+ * Fetch the current live campaign structure from Current_Pmax + Current_Dgen sheets.
+ * Returns Video creatives with no performance metrics.
+ * Uses a separate cache key from the performance data.
+ */
+export async function fetchCurrentStructure(): Promise<CurrentStructureResponse> {
+  return apiFetch<CurrentStructureResponse>("/api/current-structure");
 }
