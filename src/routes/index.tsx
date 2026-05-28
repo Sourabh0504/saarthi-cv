@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState, useEffect } from "react";
 import { Gem, Sparkles, Moon, Sun, LayoutGrid, Trophy, Database, IndianRupee, MousePointerClick, Eye, Target, PanelLeftClose, PanelLeftOpen, Network, Maximize2 } from "lucide-react";
-import { creatives, dailyPerformance, cities } from "@/data/mockData";
+import { creatives, dailyPerformance, cities, type Creative } from "@/data/mockData";
 import { computeMetrics, fmtINR, fmtNum, fmtPct, type ComputedMetrics } from "@/lib/metrics";
 import { GroupingSidebar, type SidebarMode } from "@/components/GroupingSidebar";
 import { type Dim, DEFAULT_HIERARCHY } from "@/lib/hierarchy";
@@ -10,6 +10,8 @@ import { DirectoryTree } from "@/components/DirectoryTree";
 import { TopPerformers } from "@/components/TopPerformers";
 import { FilterPanel, type Filters } from "@/components/FilterPanel";
 import { ExportModal } from "@/components/ExportModal";
+import { SavedViewsMenu } from "@/components/SavedViewsMenu";
+import { CreativeDetailModal } from "@/components/CreativeDetailModal";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -50,7 +52,9 @@ function Portal() {
   const [exportOpen, setExportOpen] = useState(false);
   const [rankMetric, setRankMetric] = useState<"ctr" | "conversions" | "cpc" | "cpa">("ctr");
   const [mode, setMode] = useState<SidebarMode>("report");
+  const [mode, setMode] = useState<SidebarMode>("report");
   const [rowHeight, setRowHeight] = useState<number>(96);
+  const [detailCreative, setDetailCreative] = useState<Creative | null>(null);
 
   useEffect(() => {
     const stored = localStorage.getItem("cv-theme") as "dark" | "light" | null;
