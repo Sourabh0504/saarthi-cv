@@ -315,7 +315,7 @@ function Portal() {
   );
 }
 
-}
+
 
 function KPI({ icon: Icon, label, value, accent }: { icon: React.ComponentType<{ className?: string }>; label: string; value: string; accent?: boolean }) {
   return (
