@@ -90,8 +90,7 @@ export function FilterPanel({ filters, setFilters, cities, columns, setColumns, 
   );
 }
 
-  );
-}
+
 
 function Select({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: { v: string; l: string }[] }) {
   return (
