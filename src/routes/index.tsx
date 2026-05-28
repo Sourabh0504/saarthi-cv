@@ -52,7 +52,7 @@ function Portal() {
   const [exportOpen, setExportOpen] = useState(false);
   const [rankMetric, setRankMetric] = useState<"ctr" | "conversions" | "cpc" | "cpa">("ctr");
   const [mode, setMode] = useState<SidebarMode>("report");
-  const [mode, setMode] = useState<SidebarMode>("report");
+
   const [rowHeight, setRowHeight] = useState<number>(96);
   const [detailCreative, setDetailCreative] = useState<Creative | null>(null);
 
