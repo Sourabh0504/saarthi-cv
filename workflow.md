@@ -27,7 +27,7 @@
 | 13 | [UI/UX Design System](#13-uiux-design-system) | Tokens, themes, typography, glassmorphism, animations |
 | 14 | [Feature Specifications](#14-feature-specifications) | All functional features detailed end-to-end |
 | 15 | [Performance Mathematics](#15-performance-mathematics) | Formulas, zero-guard rules, benchmarks |
-| 16 | [Export Engine](#16-export-engine) | PDF export (light/dark), Excel/CSV download |
+| 16 | [Export Engine](#16-export-engine) | Dashboard print PDFs, Creative-specific vector PDFs, Excel/CSV |
 | 17 | [Edge Cases & Guardrails](#17-edge-cases--guardrails) | All failure scenarios and their handling |
 | 18 | [Testing & QA Checklist](#18-testing--qa-checklist) | Manual and automated verification procedures |
 | 19 | [Subagents & AI Assistants](#19-subagents--ai-assistants) | Ads Agent definition, capabilities, reference |
@@ -1823,6 +1823,123 @@ interface ExportModalProps {
 ```
 
 The modal must **never** call its own fresh API fetch or compute its own filter state. It operates exclusively on the props passed from the parent. This is the single source of truth for what gets exported.
+
+---
+
+### 13.4 Creative-Specific Portrait Report (Vector PDF)
+
+> **Status:** Implemented 2026-05-30 by Sourabh Chaudhari.
+> **Implementation File:** [exportPdf.ts](file:///d:/CreativeVisibility/frontend/src/lib/exportPdf.ts)
+
+#### Philosophy & Requirements
+Unlike the dashboard-level export (which uses browser print for grid views), the **Creative Detail Modal** requires a dedicated, client-ready, single-page PDF report for individual creatives. 
+
+The client demands the highest possible visual fidelity to share with external stakeholders. The specifications are:
+1. **Single-Page, Auto-Height Portrait**: The PDF is a single portrait page. The height of the page is calculated dynamically based on the vertical height of the title and the number of active charts, growing and shrinking dynamically so there are no page breaks, blank overflow pages, or cutoffs.
+2. **True Vector Graphics**: All chart elements (lines, grid lines, dots, axes) and labels must be rendered as true PDF vector shapes (paths and selectable text) rather than rasterized screenshots. This keeps the file size small (typically < 150 KB) and guarantees that charts remain pixel-perfect and sharp at any zoom level.
+3. **Raster Exception**: The only raster element allowed is the creative image or video thumbnail itself.
+4. **Selectable Elements**: All text labels and values must be real, selectable PDF text.
+5. **Premium Dark Theme**: Drawn using brand colors matching the modal design:
+   - Page Background: `DARK = [10, 11, 15]` (RGB)
+   - Card Background: `HEADER = [18, 18, 24]` (RGB)
+   - Accent Gold: `GOLD = [200, 163, 80]` (RGB)
+   - Border Color: `BORDER = [45, 46, 58]` (RGB)
+   - Text color: `WHITE = [240, 240, 245]` (RGB)
+   - Muted labels: `MUTED = [120, 122, 140]` (RGB)
+6. **Rounded Card Styling**: Container cards use a `3mm` corner radius; individual metrics cards use a `2mm` corner radius; tag pills use a `1mm` corner radius.
+
+#### Visual Layout Structure
+- **Top Stripe**: `2.5mm` solid gold brand line.
+- **Brand Header**: Premium header block with the `CreativeVisibility` logo, campaign meta details, date range, and a dynamic India/IST timestamp.
+- **Watermark & Status**: Section label ("CREATIVE PERFORMANCE REPORT") with a colored status badge on the right (emerald for `Enabled`, red for `Paused`).
+- **Creative Title**: Large heading that automatically wraps for long headlines.
+- **Tag Row**: Rounded tag pills showing Creative Type, City, Category, and Funnel.
+- **Two-Column Section**:
+  - **Left Column** (`60mm` wide): "CREATIVE" section header, followed by a rounded card enclosing the image/video thumbnail or text ad mockup.
+  - **Right Column** (`116mm` wide): "METRICS OVERVIEW" section header, followed by a 4x2 grid of rounded metrics cards (Impressions, Clicks, Spend, CTR with delta, CPC with delta, CPM, Conversions, CR).
+- **Vector Chart Cards**: Each chart is enclosed in a rounded card container with its title on the left and a manually drawn vector legend (dashes, lines, labels) on the right.
+- **Footer**: Dynamic copyright and confidentiality text at the bottom.
+
+#### PDF Layout Diagram
+
+```
+┌──── 210mm wide ──────────────────────────────────┐
+│ ████████████████████████████████████████████████ │  ← 2.5mm gold stripe
+│ CreativeVisibility            15 May → 30 May    │  ← Header 26mm (dark theme)
+│ Luxury Jewelry · Campaign Performance Portal     │
+│ Generated: 30 May 2026, 3:30 PM                 │
+│──────────────────────────────────────────────────│
+│ CREATIVE PERFORMANCE REPORT            ENABLED   │  ← Watermark & status
+│ ❰ Creative Name / Headline ❱                    │  ← Title (wrapped)
+│ [Image] [Video] [City] [Category] [Funnel]       │  ← Tag pills
+│ Campaign: XYZ                                    │
+│──────────────────────────────────────────────────│
+│ CREATIVE ──────────┐ METRICS ─────────────────── │  ← 2-column flex labels
+│ ┌────────────────┐ │ ┌────────┬────────┬────────┐ │
+│ │                │ │ │IMPR    │CLICKS  │SPEND   │ │  ← 4x2 metrics grid
+│ │  [Image / Ad]  │ │ │1.2M    │3.4K    │Rs. 45K │ │    with deltas
+│ │                │ │ ├────────┼────────┼────────┤ │
+│ │ (60x48mm card) │ │ │CTR     │CPC     │CPM     │ │
+│ └────────────────┘ │ │2.80%   │Rs. 13.2│Rs. 370 │ │
+│                    │ └────────┴────────┴────────┘ │
+│──────────────────────────────────────────────────│
+│ ┌─ CARD HEADER ────────────────────────────────┐ │
+│ │ CTR VS. DATASET AVG     -- Dataset avg  ──Own│ │  ← Vector card container
+│ │                                              │ │    with title and legend
+│ │   [vector SVG chart element — 44mm tall]     │ │
+│ └──────────────────────────────────────────────┘ │
+│──────────────────────────────────────────────────│
+│ ┌─ CARD HEADER ────────────────────────────────┐ │
+│ │ CPC VS. DATASET AVG     -- Dataset avg  ──Own│ │
+│ │   [vector SVG chart element]                 │ │
+│ └──────────────────────────────────────────────┘ │
+│ ... [Spend & Clicks Charts]                      │
+│──────────────────────────────────────────────────│
+│ CreativeVisibility · Confidential · © 2026       │  ← Footer
+└──────────────────────────────────────────────────┘
+```
+
+#### Auto-Height Dynamic Calculation
+
+To prevent page-breaking or empty page overflows, the layout calculations dynamically calculate the exact height `PAGE_H` for the single-page document. The formula is:
+
+```typescript
+const PAGE_H =
+  2.5                       // gold stripe (STRIPE_H)
+  + 26                      // header block (HEADER_H)
+  + 5                       // gap (SECTION_GAP)
+  + 10                      // watermark label (WATERMARK_H)
+  + titleH                  // creative title (TITLE_H, wraps if long)
+  + 9                       // tags row (TAGS_H)
+  + 5                       // gap (SECTION_GAP)
+  + 54                      // Two-column section (TWO_COL_H, labels + preview/metrics cards)
+  + 5                       // gap (SECTION_GAP)
+  + numCharts * (58 + 5)    // 58mm card height (CARD_H) + 5mm gap per chart
+  + 12                      // footer height (FOOTER_H)
+  + 5;                      // bottom gap (SECTION_GAP)
+```
+
+#### Technical Implementation & Solved Blockers
+
+##### 1. SVG Computed Styles Resolution
+Vite and React style Recharts using Tailwind classes and CSS variables (e.g. `var(--gold)`, OKLCH color spaces). Direct cloning of SVG elements leaves them styled invisibly in the PDF since stylesheets are not active in `jsPDF` contexts.
+- **Implementation**: The system traverses the original DOM SVG and cloned SVG in parallel. It uses `window.getComputedStyle(orig)` to resolve the active browser styles (fill, stroke, opacity, fonts, dash arrays) and writes them directly into presentation attributes on the cloned nodes.
+
+##### 2. Structural Ancestry Hiding Bypass
+- **The Blocker**: Browsers return `display: none` in computed styles for structural SVG definitions (such as `<defs>`, `<clipPath>`, and `<rect>` elements inside clip-paths) because they reside in templates that are not physically drawn. Previously, copying these styles onto the clone forced `style="display: none;"` on the clipping paths, rendering all line curves invisible.
+- **The Fix**: The resolver checks `orig.closest(...)` against structural containers. If the element resides inside a template (like `defs`, `clipPath`, `linearGradient`, etc.), the display-hiding check is bypassed, preserving clipping bounds.
+
+##### 3. Native OKLCH to sRGB Conversion
+- **The Blocker**: Modern browsers compute Recharts colors natively as `oklch(...)`. Neither `jsPDF` nor `svg2pdf.js` support OKLCH, causing rendering of lines to fail.
+- **The Fix**: We implemented `resolveColorToRgb(colorStr)`. It assigns the color to an off-screen container element, letting the browser perform the native color space conversion to `rgb(...)` or `rgba(...)`, which is then queried and copied to the clone's attributes.
+
+##### 4. Unique ID Namespacing
+Recharts uses generic IDs (like `#recharts1-clip`) for layout clips and linear gradients. When exporting multiple charts, ID collisions occur, causing lines to crop incorrectly or colors to bleed.
+- **Implementation**: We implemented `makeIdsUnique(svg, prefix)` to prepend a chart-specific namespace (e.g. `chart-ctr-`, `chart-cpc-`) to all `id` attributes and their matching `url(#...)` or CSS `clip-path` attribute references.
+
+##### 5. Unicode / Font Remapping
+Standard Helvetica in jsPDF does not support certain Unicode characters.
+- **Remapping**: The symbol `₹` is converted to `Rs. ` (both in metrics grid and recursively inside chart text nodes), and the arrow `→` in headers is replaced with `to`.
 
 ---
 

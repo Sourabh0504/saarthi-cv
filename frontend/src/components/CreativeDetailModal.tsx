@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -8,13 +8,14 @@ import type { Creative, DailyRow } from "@/lib/api";
 import { computeMetrics, fmtINR, fmtINR0, fmtNum, fmtPct, getYouTubeId } from "@/lib/metrics";
 import {
   TrendingUp, TrendingDown, Minus, ChevronLeft, ChevronRight,
-  ArrowLeft, ArrowRight, ChevronRight as Chev, ExternalLink, Settings,
+  ArrowLeft, ArrowRight, ChevronRight as Chev, ExternalLink, Settings, FileDown, Loader2,
 } from "lucide-react";
 import { DIM_META, type Dim } from "@/lib/hierarchy";
 import { cn, copyText } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Check } from "lucide-react";
+import { exportCreativePdf } from "@/lib/exportPdf";
 
 const MODAL_METRIC_OPTS = [
   { key: "impressions", label: "Impressions" },
@@ -178,10 +179,48 @@ export function CreativeDetailModal({
   creative, onClose, daily, startDate, endDate, comparisonIds, creativeById,
   hierarchy, onNavigate, canBack, canForward, onBack, onForward,
 }: Props) {
-  // ── Metric visibility state ────────────────────────────────────────────────
+  // ── Refs for PDF chart capture ────────────────────────────────────
+  // ── Metric visibility state (declared before downloadPdf so closure captures it) ──
   const [modalMetrics, setModalMetrics] = useState<Record<string, boolean>>(DEFAULT_MODAL_METRICS);
   const toggleMetric = (key: string) =>
     setModalMetrics(prev => ({ ...prev, [key]: !prev[key] }));
+
+  // ── Chart refs + PDF export ────────────────────────────────────────────────
+  const chartRefs = {
+    ctr:          useRef<HTMLDivElement>(null),
+    cpc:          useRef<HTMLDivElement>(null),
+    spend:        useRef<HTMLDivElement>(null),
+    "impr-clicks": useRef<HTMLDivElement>(null),
+  };
+  const [isExporting, setIsExporting] = useState(false);
+
+  const downloadPdf = async () => {
+    if (!creative || !totals || isExporting) return;
+    setIsExporting(true);
+    try {
+      await exportCreativePdf({
+        creative,
+        totals,
+        avgs,
+        ctrDelta,
+        cpcDelta,
+        startDate,
+        endDate,
+        // Mirror exactly which metrics are currently visible in the modal
+        enabledMetrics: Object.entries(modalMetrics)
+          .filter(([, on]) => on)
+          .map(([key]) => key),
+        chartEls: {
+          ctr:           chartRefs.ctr.current,
+          cpc:           chartRefs.cpc.current,
+          spend:         chartRefs.spend.current,
+          "impr-clicks": chartRefs["impr-clicks"].current,
+        },
+      });
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   // ── Period observation state ───────────────────────────────────────────────
   const [selectedPeriods, setSelectedPeriods] = useState<PeriodId[]>([]);
@@ -250,6 +289,26 @@ export function CreativeDetailModal({
     return bands;
   }, [selectedPeriods, series, customStart, customEnd]);
 
+  // ── Per-chart XAxis tick data (one entry per date in series) ────────────────
+  const ctrTickMap = useMemo(() => new Map(series.map(s => [s.date, {
+    row1: s.ctr   > 0 ? `${s.ctr.toFixed(1)}%`    : "",
+    row2: s.avgCtr > 0 ? `${s.avgCtr.toFixed(1)}%` : "",
+  }])), [series]);
+
+  const cpcTickMap = useMemo(() => new Map(series.map(s => [s.date, {
+    row1: s.cpc   > 0 ? `₹${s.cpc.toFixed(0)}`    : "",
+    row2: s.avgCpc > 0 ? `₹${s.avgCpc.toFixed(0)}` : "",
+  }])), [series]);
+
+  const spendTickMap = useMemo(() => new Map(series.map(s => [s.date, {
+    row1: s.cost > 0 ? `₹${s.cost.toFixed(0)}` : "",
+  }])), [series]);
+
+  const imprClicksTickMap = useMemo(() => new Map(series.map(s => [s.date, {
+    row1: s.impressions > 0 ? fmtNum(s.impressions) : "",
+    row2: s.clicks      > 0 ? String(s.clicks)       : "",
+  }])), [series]);
+
   // Prev/next within comparisonIds
   const { prevCreative, nextCreative, position } = useMemo(() => {
     if (!creative) return { prevCreative: null, nextCreative: null, position: null as null | { i: number; n: number } };
@@ -299,18 +358,20 @@ export function CreativeDetailModal({
     if (next && next.creative_id !== creative.creative_id) onNavigate(next);
   };
 
+  // Ensure totals/avgs/deltas are computed BEFORE the early-return guard
+  // so the downloadPdf closure always has the right values.
+  const ctrDelta = avgs.ctr ? ((totals?.ctr ?? 0) - avgs.ctr) / avgs.ctr * 100 : 0;
+  const cpcDelta = avgs.cpc && (totals?.cpc ?? 0) ? ((totals?.cpc ?? 0) - avgs.cpc) / avgs.cpc * 100 : 0;
+
   if (!creative || !totals) return null;
 
-  const ytId     = creative.creative_type === "Video" ? getYouTubeId(creative.creative_url) : null;
-  const ctrDelta = avgs.ctr ? ((totals.ctr - avgs.ctr) / avgs.ctr) * 100 : 0;
-  const cpcDelta = avgs.cpc && totals.cpc ? ((totals.cpc - avgs.cpc) / avgs.cpc) * 100 : 0;
+  const ytId = creative.creative_type === "Video" ? getYouTubeId(creative.creative_url) : null;
 
   return (
     <Dialog open={!!creative} onOpenChange={(o) => !o && onClose()}>
-      {/* Fixed width, scrollable */}
       <DialogContent className="w-[960px] max-w-[96vw] max-h-[92vh] overflow-y-auto">
         <DialogHeader>
-          {/* History + prev/next nav */}
+          {/* History + prev/next nav + download button */}
           <div className="flex items-center gap-1 -mt-1 mb-1 flex-wrap">
             <Button size="sm" variant="outline" className="h-7 px-2 gap-1" disabled={!canBack} onClick={onBack} title="Back (Backspace / Alt+←)">
               <ArrowLeft className="w-3.5 h-3.5" /> Back
@@ -339,29 +400,56 @@ export function CreativeDetailModal({
                 <ChevronRight className="w-4 h-4" />
               </Button>
             </div>
+            {/* Download PDF button */}
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2.5 gap-1.5 ml-auto border-gold/40 text-gold hover:bg-gold/10 hover:border-gold hover:text-gold transition-all"
+              onClick={downloadPdf}
+              disabled={isExporting}
+              title="Download this creative as a vector PDF report"
+            >
+              {isExporting
+                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Exporting…</>
+                : <><FileDown className="w-3.5 h-3.5" /> Download PDF</>}
+            </Button>
           </div>
 
-          {/* Breadcrumb */}
-          <div className="flex items-center gap-1 text-[11px] text-muted-foreground flex-wrap pr-8">
-            {crumbs.map((c, i) => (
-              <span key={c.dim} className="flex items-center gap-1">
-                <button
-                  onClick={() => jumpToCrumbSibling(i)}
-                  className="hover:text-gold transition truncate max-w-[160px]"
-                  title={`Cycle creatives in this ${c.label}`}
-                >
-                  <span className="uppercase tracking-widest text-[9px] mr-1 opacity-60">{c.label}</span>
-                  {c.value}
-                </button>
-                <Chev className="w-3 h-3 opacity-40" />
+          {/* ── Funnel path ── */}
+          <div className="space-y-1.5 pr-8">
+            {/* Row 1: Location › Funnel › Type */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="flex items-center gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground/70">Location</span>
+                <span className="text-sm font-semibold text-foreground/90">{creative.city}</span>
               </span>
-            ))}
-            <span className="text-foreground font-medium truncate max-w-[240px]">
-              {adName(creative)}
-            </span>
+              <Chev className="w-3.5 h-3.5 text-muted-foreground/30" />
+              <span className="flex items-center gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground/70">Funnel</span>
+                <span className={cn("text-sm font-bold", creative.funnel === "MOFU" ? "text-gold" : "text-emerald-400")}>
+                  {creative.funnel}
+                </span>
+              </span>
+              <Chev className="w-3.5 h-3.5 text-muted-foreground/30" />
+              <span className="flex items-center gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground/70">Type</span>
+                <span className="text-sm font-semibold text-foreground/90">{creative.campaign_type}</span>
+              </span>
+            </div>
+            {/* Row 2: Campaign + Ad Group on same line */}
+            <div className="flex items-center gap-4 flex-wrap">
+              <span className="flex items-center gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground/70 shrink-0">Campaign</span>
+                <span className="font-mono text-sm text-foreground/90 break-all">{creative.campaign_name || "--"}</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground/70 shrink-0">Ad Group</span>
+                <span className="font-mono text-sm text-foreground/90">{creative.ad_group || "--"}</span>
+              </span>
+            </div>
           </div>
 
-          {/* Title — always rendered as a clickable link to the ad URL */}
+          {/* Title — clickable link to the creative asset */}
           <DialogTitle className="font-display text-xl tracking-tight pr-8 pt-1">
             <a
               href={creative.creative_url}
@@ -369,20 +457,31 @@ export function CreativeDetailModal({
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 hover:text-gold transition-colors group"
             >
-              <span className="underline-offset-4 group-hover:underline">
-                {adName(creative)}
-              </span>
+              <span className="underline-offset-4 group-hover:underline">{adName(creative)}</span>
               <ExternalLink className="w-4 h-4 shrink-0 opacity-50 group-hover:opacity-100 transition-opacity" />
             </a>
           </DialogTitle>
 
-          {/* Tags */}
-          <div className="text-xs text-muted-foreground flex flex-wrap gap-1.5 pt-1">
-            <span className="px-1.5 py-0.5 rounded bg-muted">{creative.creative_type}</span>
-            <span className="px-1.5 py-0.5 rounded bg-muted">{creative.city}</span>
-            <span className="px-1.5 py-0.5 rounded bg-muted">{creative.category}</span>
-            <span className="px-1.5 py-0.5 rounded bg-gold/15 text-gold">{creative.funnel}</span>
-            <span className="px-1.5 py-0.5 rounded bg-muted font-mono">{creative.campaign_name}</span>
+          {/* Raw URL link — small, below the title */}
+          {creative.creative_url && (
+            <a
+              href={creative.creative_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={e => e.stopPropagation()}
+              className="flex items-center gap-1 text-[10px] text-blue-400/60 hover:text-blue-400 transition-colors truncate -mt-0.5"
+            >
+              <span className="text-muted-foreground/60 font-semibold not-italic">Link:</span>
+              <ExternalLink className="w-3 h-3 shrink-0" />
+              <span className="truncate font-mono">{creative.creative_url}</span>
+            </a>
+          )}
+
+          {/* Type + Funnel tag pills */}
+          <div className="flex flex-wrap gap-1.5 pt-0.5">
+            <span className="px-1.5 py-0.5 rounded bg-muted text-xs">{creative.creative_type}</span>
+            <span className="px-1.5 py-0.5 rounded bg-gold/15 text-gold text-xs">{creative.funnel}</span>
+            {creative.category && <span className="px-1.5 py-0.5 rounded bg-muted text-xs">{creative.category}</span>}
           </div>
         </DialogHeader>
 
@@ -586,17 +685,15 @@ export function CreativeDetailModal({
         {/* ── Charts — one chart per row ──────────────────────────────────── */}
         <div className="flex flex-col gap-3 pt-1">
           {/* 1 — CTR vs dataset average */}
-          <ChartCard title="CTR vs. dataset avg" suffix="%">
+          <ChartCard title="CTR vs. dataset avg" suffix="%" chartRef={chartRefs.ctr}>
             <LineChart data={series} margin={{ top: 22, right: 5, left: 0, bottom: 0 }}>
               {periodBands.map(b => (
-                <ReferenceArea
-                  key={b.id} x1={b.x1} x2={b.x2}
-                  fill={b.color} fillOpacity={0.12} stroke="none"
-                  label={{ content: (p: { viewBox?: { x: number; y: number; width: number; height: number } }) => <BandLabel viewBox={p.viewBox} label={b.label} color={b.color} /> }}
-                />
+                <ReferenceArea key={b.id} x1={b.x1} x2={b.x2} fill={b.color} fillOpacity={0.12} stroke="none"
+                  label={{ content: (p: { viewBox?: { x: number; y: number; width: number; height: number } }) => <BandLabel viewBox={p.viewBox} label={b.label} color={b.color} /> }} />
               ))}
               <CartesianGrid strokeDasharray="3 3" stroke="oklch(1 0 0 / 0.06)" />
-              <XAxis dataKey="date" stroke="oklch(0.7 0.02 260)" fontSize={10} />
+              <XAxis dataKey="date" height={52} stroke="oklch(0.7 0.02 260)"
+                tick={(p: any) => <ChartXTick {...p} tickMap={ctrTickMap} color1={CHART_GOLD} color2={CHART_TEAL} />} />
               <YAxis stroke="oklch(0.7 0.02 260)" fontSize={10} tickFormatter={v => `${v}%`} />
               <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => [`${v.toFixed(2)}%`]} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -607,17 +704,15 @@ export function CreativeDetailModal({
           </ChartCard>
 
           {/* 2 — CPC vs dataset average */}
-          <ChartCard title="CPC vs. dataset avg" suffix="₹">
+          <ChartCard title="CPC vs. dataset avg" suffix="₹" chartRef={chartRefs.cpc}>
             <LineChart data={series} margin={{ top: 22, right: 5, left: 0, bottom: 0 }}>
               {periodBands.map(b => (
-                <ReferenceArea
-                  key={b.id} x1={b.x1} x2={b.x2}
-                  fill={b.color} fillOpacity={0.12} stroke="none"
-                  label={{ content: (p: { viewBox?: { x: number; y: number; width: number; height: number } }) => <BandLabel viewBox={p.viewBox} label={b.label} color={b.color} /> }}
-                />
+                <ReferenceArea key={b.id} x1={b.x1} x2={b.x2} fill={b.color} fillOpacity={0.12} stroke="none"
+                  label={{ content: (p: { viewBox?: { x: number; y: number; width: number; height: number } }) => <BandLabel viewBox={p.viewBox} label={b.label} color={b.color} /> }} />
               ))}
               <CartesianGrid strokeDasharray="3 3" stroke="oklch(1 0 0 / 0.06)" />
-              <XAxis dataKey="date" stroke="oklch(0.7 0.02 260)" fontSize={10} />
+              <XAxis dataKey="date" height={52} stroke="oklch(0.7 0.02 260)"
+                tick={(p: any) => <ChartXTick {...p} tickMap={cpcTickMap} color1={CHART_GOLD} color2={CHART_TEAL} />} />
               <YAxis stroke="oklch(0.7 0.02 260)" fontSize={10} tickFormatter={v => `₹${v}`} />
               <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => [`₹${v.toFixed(2)}`]} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -628,17 +723,15 @@ export function CreativeDetailModal({
           </ChartCard>
 
           {/* 3 — Daily spend */}
-          <ChartCard title="Spend (₹)">
+          <ChartCard title="Spend (₹)" chartRef={chartRefs.spend}>
             <LineChart data={series} margin={{ top: 22, right: 5, left: 0, bottom: 0 }}>
               {periodBands.map(b => (
-                <ReferenceArea
-                  key={b.id} x1={b.x1} x2={b.x2}
-                  fill={b.color} fillOpacity={0.12} stroke="none"
-                  label={{ content: (p: { viewBox?: { x: number; y: number; width: number; height: number } }) => <BandLabel viewBox={p.viewBox} label={b.label} color={b.color} /> }}
-                />
+                <ReferenceArea key={b.id} x1={b.x1} x2={b.x2} fill={b.color} fillOpacity={0.12} stroke="none"
+                  label={{ content: (p: { viewBox?: { x: number; y: number; width: number; height: number } }) => <BandLabel viewBox={p.viewBox} label={b.label} color={b.color} /> }} />
               ))}
               <CartesianGrid strokeDasharray="3 3" stroke="oklch(1 0 0 / 0.06)" />
-              <XAxis dataKey="date" stroke="oklch(0.7 0.02 260)" fontSize={10} />
+              <XAxis dataKey="date" height={40} stroke="oklch(0.7 0.02 260)"
+                tick={(p: any) => <ChartXTick {...p} tickMap={spendTickMap} color1={CHART_GOLD} />} />
               <YAxis stroke="oklch(0.7 0.02 260)" fontSize={10} tickFormatter={v => `₹${v}`} />
               <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => [`₹${v.toFixed(0)}`]} />
               <Line type="monotone" dataKey="cost" name="Spend" stroke="var(--gold)" strokeWidth={2} dot={false} />
@@ -646,17 +739,15 @@ export function CreativeDetailModal({
           </ChartCard>
 
           {/* 4 — Impressions & Clicks */}
-          <ChartCard title="Impressions & Clicks">
+          <ChartCard title="Impressions & Clicks" chartRef={chartRefs["impr-clicks"]}>
             <LineChart data={series} margin={{ top: 22, right: 5, left: 0, bottom: 0 }}>
               {periodBands.map(b => (
-                <ReferenceArea
-                  key={b.id} yAxisId="l" x1={b.x1} x2={b.x2}
-                  fill={b.color} fillOpacity={0.12} stroke="none"
-                  label={{ content: (p: { viewBox?: { x: number; y: number; width: number; height: number } }) => <BandLabel viewBox={p.viewBox} label={b.label} color={b.color} /> }}
-                />
+                <ReferenceArea key={b.id} yAxisId="l" x1={b.x1} x2={b.x2} fill={b.color} fillOpacity={0.12} stroke="none"
+                  label={{ content: (p: { viewBox?: { x: number; y: number; width: number; height: number } }) => <BandLabel viewBox={p.viewBox} label={b.label} color={b.color} /> }} />
               ))}
               <CartesianGrid strokeDasharray="3 3" stroke="oklch(1 0 0 / 0.06)" />
-              <XAxis dataKey="date" stroke="oklch(0.7 0.02 260)" fontSize={10} />
+              <XAxis dataKey="date" height={52} stroke="oklch(0.7 0.02 260)"
+                tick={(p: any) => <ChartXTick {...p} tickMap={imprClicksTickMap} color1={CHART_GOLD} color2={CHART_TEAL} />} />
               <YAxis yAxisId="l" stroke="oklch(0.7 0.02 260)" fontSize={10} />
               <YAxis yAxisId="r" orientation="right" stroke="oklch(0.7 0.02 260)" fontSize={10} />
               <Tooltip contentStyle={tooltipStyle} />
@@ -665,9 +756,47 @@ export function CreativeDetailModal({
               <Line yAxisId="r" type="monotone" dataKey="clicks"      name="Clicks"      stroke="oklch(0.62 0.11 175)" strokeWidth={2} dot={false} />
             </LineChart>
           </ChartCard>
-        </div>
+        </div> {/* end charts */}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ── Chart color constants (resolved sRGB — safe in SVG attributes) ───────────
+const CHART_GOLD = "#c8a350";   // ~var(--gold)
+const CHART_TEAL = "#3dbf9e";   // ~oklch(0.62 0.11 175)
+
+// ── Custom XAxis tick: date + two metric data rows ─────────────────────────────
+function ChartXTick({
+  x, y, payload, tickMap, color1, color2,
+}: {
+  x?: number; y?: number;
+  payload?: { value: string };
+  tickMap: Map<string, { row1?: string; row2?: string }>;
+  color1: string;
+  color2?: string;
+}) {
+  if (x === undefined || y === undefined || !payload) return null;
+  const vals = tickMap.get(payload.value);
+  return (
+    <g transform={`translate(${x},${y})`}>
+      {/* Date label */}
+      <text x={0} y={0} dy={12} textAnchor="middle" fill="#6b7280" fontSize={9}>
+        {payload.value}
+      </text>
+      {/* Row 1 — gold/yellow metric */}
+      {vals?.row1 && (
+        <text x={0} y={0} dy={25} textAnchor="middle" fill={color1} fontSize={8} fontWeight="700">
+          {vals.row1}
+        </text>
+      )}
+      {/* Row 2 — teal/green metric */}
+      {vals?.row2 && color2 && (
+        <text x={0} y={0} dy={37} textAnchor="middle" fill={color2} fontSize={8}>
+          {vals.row2}
+        </text>
+      )}
+    </g>
   );
 }
 
@@ -710,20 +839,21 @@ function Stat({ label, value, sub, delta, accent }: {
   );
 }
 
-function ChartCard({ title, children, suffix }: {
-  title:    string;
-  children: React.ReactElement;
-  suffix?:  string;
+function ChartCard({ title, children, suffix, chartRef }: {
+  title:     string;
+  children:  React.ReactElement;
+  suffix?:   string;
+  chartRef?: React.RefObject<HTMLDivElement | null>;
 }) {
   return (
-    <div className="rounded-xl border border-border bg-background/40 p-3 w-full">
+    <div ref={chartRef} className="rounded-xl border border-border bg-background/40 p-3 w-full">
       <div className="flex items-center justify-between mb-2">
         <h4 className="text-xs font-display font-semibold uppercase tracking-widest text-muted-foreground">
           {title}
         </h4>
         {suffix && <span className="text-[10px] text-muted-foreground">{suffix}</span>}
       </div>
-      <div className="h-48">
+      <div className="h-56">
         <ResponsiveContainer width="100%" height="100%">{children}</ResponsiveContainer>
       </div>
     </div>

@@ -15,3 +15,27 @@ All notable changes to the **CreativeVisibility** project will be documented in 
 ### Changed
 - [workflow.md](file:///d:/CreativeVisibility/workflow.md): Completely restructured into a 17-section, indexed master specification — covering executive summary, problem statement, campaign hierarchy, full technology stack, directory map, data architecture (SQLite schema + SQL queries), Google Sheets schema, FastAPI routes, React component tree, CSS design tokens, all feature specs, performance formulas, export engine (PDF/CSV), 10 edge case guardrails, 7-phase QA checklist, subagent reference, and a complete decision history log.
 - [agents/ads_agent.md](file:///d:/CreativeVisibility/agents/ads_agent.md): Expanded into an encyclopedic 13-section Google Ads reference covering all campaign types, bidding strategies, audience signals, asset specs, formulas, benchmarks, and 10 operational mandates.
+
+## [Unreleased] - 2026-05-30 (Session 2)
+
+### Added
+- [frontend/src/lib/exportPdf.ts](file:///d:/CreativeVisibility/frontend/src/lib/exportPdf.ts): New `exportDashboardPdf()` function — full component-based jsPDF dashboard performance report. Draws header, context strip, grand-total KPI tiles, and per-creative rows (thumbnail + info + metric tiles) entirely as real PDF objects (no screenshots). Supports both dark and light themes, auto-height portrait A4, adjustable density (thumbnail height).
+- [frontend/src/lib/exportPdf.ts](file:///d:/CreativeVisibility/frontend/src/lib/exportPdf.ts): `loadNotoSans()` — defines the previously missing font loader called by `exportCreativePdf`.
+- [frontend/src/components/ExportModal.tsx](file:///d:/CreativeVisibility/frontend/src/components/ExportModal.tsx): Complete redesign. Now a 5-zone glassmorphic dialog: header, view snapshot card, scope+density settings (visual card pickers), live HTML PDF preview pane with inline dark/light toggle, and download CTA buttons. Hovering a download button switches the preview theme live.
+
+### Changed
+- [frontend/src/components/ExportModal.tsx](file:///d:/CreativeVisibility/frontend/src/components/ExportModal.tsx): Removed `hierarchyOptions` / `canScopeAll` props. Added `visibleRows` and `totals` props for the live preview.
+- [frontend/src/routes/index.tsx](file:///d:/CreativeVisibility/frontend/src/routes/index.tsx): `handleExportPDF` rewritten — no longer pre-manipulates DOM state. Passes `visibleRows`/`totals` directly to `exportDashboardPdf`. All scope logic computed inline.
+- [frontend/src/routes/index.tsx](file:///d:/CreativeVisibility/frontend/src/routes/index.tsx): `exportContext` gains `columnKeys` field. Removed `hierarchyLabel`/`sortLabel`/`rankMetric` from exportContext (not needed by new modal).
+- Removed `hierarchyOptions` useMemo and `HIERARCHY_PRESETS` import from index.tsx.
+
+## [Unreleased] - 2026-05-30
+
+### Added
+- [frontend/src/lib/exportPdf.ts](file:///d:/CreativeVisibility/frontend/src/lib/exportPdf.ts): Completely rewrote the creative-specific performance report PDF exporter with dynamic height portrait formatting, selectable text, and high-fidelity Recharts vector SVG paths.
+- Added native OKLCH to sRGB color resolution and structural defs display-hiding bypass to fix empty vector charts in PDFs.
+- Programmed native jsPDF vector legend drawings inside the PDF card headers.
+
+### Changed
+- [workflow.md](file:///d:/CreativeVisibility/workflow.md): Added Section 13.4 to document the Creative-Specific Portrait Report specification, technical workflow, and solved blockers.
+- Updated Table of Contents and changelog metadata.

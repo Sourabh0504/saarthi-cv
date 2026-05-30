@@ -13,13 +13,13 @@ import {
   type Creative, type FilterOptions, type RawDailyRow, type CreativeDimensionMap,
 } from "@/lib/api";
 import { idbClear } from "@/lib/idb";
-import { exportPdf } from "@/lib/exportPdf";
+import { exportDashboardPdf } from "@/lib/exportPdf";
 
 // ── Lib ───────────────────────────────────────────────────────────────────────
 import { aggregateByDateRange, deriveFilterOptions as deriveFO, sortDailyRows } from "@/lib/aggregator";
 import { computeMetrics, fmtINR, fmtINR0, fmtNum, fmtPct, type ComputedMetrics } from "@/lib/metrics";
 import { GroupingSidebar, type SidebarMode } from "@/components/GroupingSidebar";
-import { type Dim, DEFAULT_HIERARCHY, DIM_META, HIERARCHY_PRESETS } from "@/lib/hierarchy";
+import { type Dim, DEFAULT_HIERARCHY, DIM_META } from "@/lib/hierarchy";
 import { DirectoryTree } from "@/components/DirectoryTree";
 import { TopPerformers } from "@/components/TopPerformers";
 import { FilterPanel, type Filters } from "@/components/FilterPanel";
@@ -45,7 +45,7 @@ export const Route = createFileRoute("/")(({
     links: [
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "" },
-      { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Montserrat:wght@500;600;700;800&display=swap" },
+      { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Montserrat:wght@500;600;700;800&display=swap" },
     ],
   }),
   component: Portal,
@@ -432,13 +432,6 @@ function Portal() {
   const dateRangeLabel = filters.startDate && filters.endDate
     ? `${filters.startDate} to ${filters.endDate}`
     : "All dates";
-  const hierarchyOptions = useMemo(
-    () => [
-      { id: "current", label: `Current | ${hierarchyLabel}` },
-      ...HIERARCHY_PRESETS.map(p => ({ id: p.id, label: p.label })),
-    ],
-    [hierarchyLabel],
-  );
   const exportContext = useMemo(() => ({
     modeLabel: mode === "structure" ? "Structure" : "Report",
     dateRange: dateRangeLabel,
@@ -448,13 +441,11 @@ function Portal() {
       funnel: filters.funnel,
       search: filters.search,
     },
-    hierarchyLabel,
     selectionLabel,
     selectedCount: selected.size,
     totalCount: creatives.length,
-    sortLabel,
-    rankMetric: mode === "report" ? rankMetric : undefined,
     columnsLabel: columnLabels.length ? columnLabels.join(", ") : "None",
+    columnKeys: Object.entries(columns).filter(([, v]) => v).map(([k]) => k),
     rowHeight,
   }), [
     mode,
@@ -463,13 +454,11 @@ function Portal() {
     filters.city,
     filters.funnel,
     filters.search,
-    hierarchyLabel,
     selectionLabel,
     selected.size,
     creatives.length,
-    sortLabel,
-    rankMetric,
     columnLabels,
+    columns,
     rowHeight,
   ]);
 
@@ -496,71 +485,61 @@ function Portal() {
     toast.success(`Exported ${visibleRows.length} creatives to CSV`);
   };
 
-  const handleExportPDF = async ({ theme, scope, hierarchyId, rowHeight: rowHeightOverride }: ExportPick) => {
+  const handleExportPDF = async ({ theme, scope, rowHeight: rowHeightOverride }: ExportPick) => {
     setExportOpen(false);
     setPdfLoading(true);
-    const modeLabel = mode === "structure" ? "Structure" : "Report";
 
-    const prev = {
-      hierarchy,
-      rowHeight,
-      activeKey,
-      selected: new Set(selected),
-    };
+    // Build the rows to export — either current selection or all creatives
+    const exportRows = scope === "all"
+      ? creatives.map(c => ({
+          creative: c,
+          metrics: aggregated.get(c.creative_id)
+            ?? computeMetrics({ impressions: 0, clicks: 0, cost: 0, conversions: 0 }),
+        }))
+      : visibleRows;
 
-    const allIds = creatives.map(c => c.creative_id);
-    let exportHierarchy = hierarchy;
-    const preset = hierarchyId !== "current"
-      ? HIERARCHY_PRESETS.find(p => p.id === hierarchyId)
-      : null;
-    if (preset) exportHierarchy = preset.dims;
+    const exportTotals = scope === "all"
+      ? computeMetrics(creatives.reduce(
+          (acc, c) => ({
+            impressions: acc.impressions + (c.impressions ?? 0),
+            clicks:      acc.clicks      + (c.clicks      ?? 0),
+            cost:        acc.cost        + (c.cost        ?? 0),
+            conversions: acc.conversions + (c.conversions ?? 0),
+          }),
+          { impressions: 0, clicks: 0, cost: 0, conversions: 0 },
+        ))
+      : totals;
 
-    let exportSelectionLabel = selectionLabel;
-    let exportSelectedCount = selected.size;
-    if (scope === "all") {
-      setActiveKey("ALL");
-      setSelected(new Set(allIds));
-      exportSelectionLabel = "All creatives";
-      exportSelectedCount = creatives.length;
-    }
-
-    if (exportHierarchy !== hierarchy) setHierarchy(exportHierarchy);
-    if (rowHeightOverride !== null) setRowHeight(rowHeightOverride);
-
-    const exportHierarchyLabel = exportHierarchy.map(d => DIM_META[d].label).join(" | ");
-    const filterBits: string[] = [];
-    filterBits.push(filters.status !== "All" ? `Status ${filters.status}` : "Status All");
-    filterBits.push(filters.city !== "All" ? `City ${filters.city}` : "City All");
-    filterBits.push(filters.funnel !== "All" ? `Funnel ${filters.funnel}` : "Funnel All");
-    if (filters.search) filterBits.push(`Search ${filters.search}`);
-
-    const columnsShort = columnLabels.length > 6
-      ? `${columnLabels.slice(0, 6).join(", ")} +${columnLabels.length - 6} more`
-      : columnLabels.join(", ");
-
-    const metaLines = [
-      `Mode: ${modeLabel} | Selection: ${exportSelectionLabel} | Creatives: ${exportSelectedCount}/${creatives.length}`,
-      `Filters: ${filterBits.join(" | ")} | Hierarchy: ${exportHierarchyLabel}`,
-      `Sort: ${sortLabel} | Columns: ${columnsShort || "None"}`,
+    const filterBits: string[] = [
+      filters.status.length ? `Status: ${filters.status.join(", ")}` : "Status: All",
+      filters.city.length   ? `City: ${filters.city.join(", ")}`     : "City: All",
+      filters.funnel.length ? `Funnel: ${filters.funnel.join(", ")}` : "Funnel: All",
+      ...(filters.search ? [`Search: "${filters.search}"`] : []),
     ];
 
+    const enabledCols = Object.entries(columns).filter(([, v]) => v).map(([k]) => k);
+
     try {
-      await new Promise(r => requestAnimationFrame(() => setTimeout(r, 60)));
-      await exportPdf({
+      await exportDashboardPdf({
+        rows:           exportRows,
+        totals:         exportTotals,
+        enabledColumns: enabledCols,
+        context: {
+          dateRange:      dateRangeLabel,
+          modeLabel:      mode === "structure" ? "Structure" : "Report",
+          selectionLabel: scope === "all" ? "All creatives" : selectionLabel,
+          selectedCount:  exportRows.length,
+          totalCount:     creatives.length,
+          filterBits,
+          columnsLabel:   columnLabels.length ? columnLabels.join(", ") : "None",
+        },
+        rowHeightPx: rowHeightOverride ?? rowHeight,
         theme,
-        dateRange: dateRangeLabel,
-        filename:  `CreativeVisibility_${modeLabel}_${filters.startDate}_${filters.endDate}`,
-        selector:  ".print-area",
-        metaLines,
       });
-      toast.success("PDF exported", { description: `Saved as ${modeLabel} PDF (${theme} theme).` });
+      toast.success("PDF exported", { description: `${exportRows.length} creatives · ${theme} theme` });
     } catch (err) {
       toast.error("PDF export failed", { description: err instanceof Error ? err.message : "Unknown error" });
     } finally {
-      setHierarchy(prev.hierarchy);
-      setRowHeight(prev.rowHeight);
-      setActiveKey(prev.activeKey);
-      setSelected(prev.selected);
       setPdfLoading(false);
     }
   };
@@ -906,8 +885,8 @@ function Portal() {
         onClose={() => setExportOpen(false)}
         onPick={handleExportPDF}
         context={exportContext}
-        hierarchyOptions={hierarchyOptions}
-        canScopeAll={selected.size !== creatives.length}
+        visibleRows={visibleRows}
+        totals={totals}
       />
 
       <CreativeDetailModal
