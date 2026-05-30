@@ -27,3 +27,8 @@ Thumbs.db
 
 # Logs
 *.log
+
+# SQLite persistent cache — runtime artifact, never commit
+cv_cache.db
+*.db-wal
+*.db-shm

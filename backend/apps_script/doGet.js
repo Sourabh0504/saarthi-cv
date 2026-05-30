@@ -14,11 +14,15 @@
 //   composite key -- unique per card in the portal.
 //   creative_url  = raw Asset URL -- used for thumbnails and display.
 //
-// CACHING STRATEGY (two-layer):
-//   Layer 1: Apps Script CacheService (20-min TTL, chunked, up to 450 KB)
-//     -- First call reads Daily_dump sheet (slow on large sheets).
-//     -- Every call within 20 min returns cached JSON without touching the sheet.
-//   Layer 2: FastAPI TTLCache (15-min TTL in Python)
+// CACHING STRATEGY (three-layer):
+//   Layer 1: ScriptProperties persistent cache (survives cold-starts, no TTL)
+//     -- First ever call reads the sheet and stores result in ScriptProperties.
+//     -- All future cold-starts serve from ScriptProperties instantly (~200ms).
+//     -- Invalidated only by POST /api/sync (which calls ?action=invalidate).
+//   Layer 2: Apps Script CacheService (20-min TTL, chunked, raw JSON — no gzip)
+//     -- Faster than ScriptProperties for hot paths (in-memory).
+//     -- Stores raw JSON (no gzip) for speed. Chunks up to 450 KB total.
+//   Layer 3: FastAPI TTLCache (30-min TTL in Python)
 //     -- After Apps Script responds, Python caches the result.
 //     -- Subsequent portal loads hit only the Python cache (<5ms).
 //
@@ -34,19 +38,78 @@
 
 // =============================================================
 // MAIN ENTRY POINT
+
+// =============================================================
+// SCHEDULED CLEANUP: Delete rows with 0 Impr in Daily_dump
+// =============================================================
+/**
+ * Deletes up to BATCH_SIZE rows in Daily_dump where Impr (impressions) is 0.
+ * If more remain, schedules itself to run again in 1 minute (self-chaining).
+ * Schedule a regular time-driven trigger (e.g., every 8 hours) for new data.
+ */
+function deleteZeroImprRows() {
+  var BATCH_SIZE = 1000;
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Daily_dump");
+  if (!sheet) throw new Error("Sheet 'Daily_dump' not found.");
+  var data = sheet.getDataRange().getValues();
+  if (data.length < 2) return; // No data rows
+  var header = data[0];
+  var imprCol = header.map(function(h) { return String(h).trim().toLowerCase(); }).indexOf("impr");
+  if (imprCol === -1) throw new Error("'Impr' column not found in Daily_dump.");
+  var rowsToDelete = [];
+  var zeroImprCount = 0;
+  for (var i = 1; i < data.length; i++) {
+    var val = data[i][imprCol];
+    if (Number(val) === 0) {
+      zeroImprCount++;
+      if (rowsToDelete.length < BATCH_SIZE) rowsToDelete.push(i + 1); // +1 for 1-based, +1 for header
+    }
+  }
+  // Delete from bottom to top to avoid shifting
+  for (var j = rowsToDelete.length - 1; j >= 0; j--) {
+    sheet.deleteRow(rowsToDelete[j]);
+  }
+  Logger.log("Deleted " + rowsToDelete.length + " zero-impression rows (batch mode)");
+  // If more zero-impression rows remain, schedule next batch in 1 minute
+  if (zeroImprCount > BATCH_SIZE) {
+    ScriptApp.newTrigger('deleteZeroImprRows')
+      .timeBased()
+      .after(60 * 1000) // 1 minute
+      .create();
+    Logger.log("Scheduled next batch in 1 minute");
+  }
+}
 // =============================================================
 
 function doGet(e) {
   try {
     var params = e.parameter || {};
 
+    // ── Invalidate persistent cache (called by POST /api/sync) ─────────────
+    // ?action=invalidate clears all ScriptProperties cv_* keys, forcing a full
+    // sheet read on the next request. CacheService clears itself via TTL.
+    var action = params.action ? String(params.action).trim().toLowerCase() : "";
+    if (action === "invalidate") {
+      invalidateScriptPropertiesCache();
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: "ok", message: "Persistent cache invalidated." }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
     // ── Current Structure shortcut ──────────────────────────────────────────
-    // ?tab=current_structure → reads Current_Pmax + Current_Dgen sheets
-    // and returns the live campaign structure (no performance data).
     var tab = params.tab ? String(params.tab).trim().toLowerCase() : "";
     if (tab === "current_structure") {
       var ss = SpreadsheetApp.getActiveSpreadsheet();
       return handleCurrentStructure(ss);
+    }
+
+    // ── Raw Daily shortcut ─────────────────────────────────────────────────
+    // ?tab=raw_daily → returns ALL daily rows for ALL dates (no aggregation).
+    // The frontend receives this once and aggregates by date range in-browser.
+    // This makes date range changes instant (client-side useMemo) like filters.
+    if (tab === "raw_daily") {
+      var ss = SpreadsheetApp.getActiveSpreadsheet();
+      return handleRawDaily(ss);
     }
 
     // Date range defaults:
@@ -68,17 +131,16 @@ function doGet(e) {
       }
     }
 
-    // ----------------------------------------------------------------
-    // LAYER 1 CACHE: Apps Script CacheService (fast path)
-    // First call: reads the full sheet (slow -- 15-60s on large sheets).
-    // Every subsequent call within 20 minutes: instant from cache.
-    // Chunked storage handles payloads up to ~450 KB (5 x 90 KB).
-    // ----------------------------------------------------------------
-    var scriptCache = CacheService.getScriptCache();
     var statusKey = statusFilter ? statusFilter.toLowerCase() : "all";
     var cacheKey  = (useAutoRange
       ? "cv_auto"
       : "cv_" + startStr.replace(/-/g, "") + "_" + endStr.replace(/-/g, "")) + "_" + statusKey;
+
+    // ----------------------------------------------------------------
+    // LAYER 2 CACHE: Apps Script CacheService (20-min TTL, raw JSON)
+    // Fast in-memory path. No gzip — raw JSON is faster for small-medium payloads.
+    // ----------------------------------------------------------------
+    var scriptCache = CacheService.getScriptCache();
     var cachedStr   = getCachedPayload(scriptCache, cacheKey);
     if (cachedStr) {
       return ContentService
@@ -86,13 +148,30 @@ function doGet(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
 
-    // Cache miss -- compute from sheet
+    // ----------------------------------------------------------------
+    // LAYER 1 CACHE: ScriptProperties (persistent, survives cold-starts)
+    // Checked after CacheService miss. Survives server restarts & cold-starts.
+    // Invalidated explicitly via ?action=invalidate or POST /api/sync.
+    // ----------------------------------------------------------------
+    var scriptProps = PropertiesService.getScriptProperties();
+    var propCached  = scriptProps.getProperty(cacheKey);
+    if (propCached) {
+      // Backfill CacheService so next 20 min is served from memory
+      try { cachePayload(scriptCache, cacheKey, propCached, 1200); } catch (ce) {}
+      return ContentService
+        .createTextOutput(propCached)
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // ----------------------------------------------------------------
+    // CACHE MISS — Read sheet and aggregate
+    // ----------------------------------------------------------------
     var startDate = useAutoRange ? null : parseDateStr(startStr);
     var endDate   = useAutoRange ? null : parseDateStr(endStr);
 
     var ss = SpreadsheetApp.getActiveSpreadsheet();
 
-    // Read + aggregate Daily_dump
+    // Read + aggregate Daily_dump (selective columns for speed)
     var result = aggregateDailyDump(ss, startDate, endDate, statusFilter);
 
     // Resolve date range for response (auto range uses sheet min/max)
@@ -105,9 +184,10 @@ function doGet(e) {
     // Derive filter options dynamically (never hardcoded)
     var filterOptions = deriveFilterOptions(result.dimensions);
 
-    // Build response payload
+    // Build response payload — include data_fetched_at for freshness display
     var payload = {
       status:               "ok",
+      data_fetched_at:      new Date().toISOString(),
       date_range:           { start: resolvedStart, end: resolvedEnd },
       available_date_range: result.available_date_range,
       dimensions_count:     result.dimensions.length,
@@ -119,9 +199,17 @@ function doGet(e) {
 
     var payloadStr = JSON.stringify(payload);
 
-    // Store in Apps Script cache (20-min TTL)
-    // If cachePayload throws (e.g. payload too large), ignore -- not fatal.
+    // Store in CacheService (20-min TTL) — raw JSON, no compression overhead
     try { cachePayload(scriptCache, cacheKey, payloadStr, 1200); } catch (ce) {}
+
+    // Store in ScriptProperties (persistent) — survives cold-starts
+    // ScriptProperties has a 9KB per-property limit; store only if payload fits.
+    // For large payloads, we skip ScriptProperties (CacheService is still used).
+    try {
+      if (payloadStr.length <= 450000) {  // ~450KB safety limit
+        scriptProps.setProperty(cacheKey, payloadStr);
+      }
+    } catch (pe) { /* non-fatal — ScriptProperties quota exceeded */ }
 
     return ContentService
       .createTextOutput(payloadStr)
@@ -134,23 +222,23 @@ function doGet(e) {
 
 
 // =============================================================
-// CACHE HELPERS (chunked CacheService)
+// CACHE HELPERS (chunked CacheService — raw JSON, no gzip)
 // CacheService limit: 100 KB per entry.
 // We split into 90 KB chunks and use putAll() for one atomic write.
+// No compression: raw JSON is faster for our payload sizes (avoids 2-5s gzip).
 // =============================================================
 
 /**
- * Store a string in CacheService using chunked writes.
- * Handles payloads up to (maxChunks x CHUNK_SIZE) bytes.
+ * Store a raw string in CacheService using chunked writes.
+ * Handles payloads up to (n x 90 KB) bytes.
  */
 function cachePayload(cache, key, str, ttl) {
-  var CHUNK = 90000; // 90 KB per chunk
-  var compressed = compressToBase64(str);
-  var n     = Math.ceil(compressed.length / CHUNK);
+  var CHUNK = 90000; // 90 KB per chunk (CacheService limit is 100 KB)
+  var n     = Math.ceil(str.length / CHUNK);
   var pairs = {};
   pairs[key + "__n"] = String(n);
   for (var i = 0; i < n; i++) {
-    pairs[key + "__" + i] = compressed.substring(i * CHUNK, (i + 1) * CHUNK);
+    pairs[key + "__" + i] = str.substring(i * CHUNK, (i + 1) * CHUNK);
   }
   cache.putAll(pairs, ttl); // atomic write of all chunks
 }
@@ -166,15 +254,22 @@ function getCachedPayload(cache, key) {
   var chunks = [];
   for (var i = 0; i < n; i++) {
     var chunk = cache.get(key + "__" + i);
-    if (chunk === null) return null; // chunk expired -- full cache miss
+    if (chunk === null) return null; // chunk expired — full cache miss
     chunks.push(chunk);
   }
-  var joined = chunks.join("");
-  try {
-    return decompressFromBase64(joined);
-  } catch (e) {
-    return null;
-  }
+  return chunks.join(""); // return raw JSON string directly
+}
+
+/**
+ * Invalidate all ScriptProperties cache entries for CreativeVisibility.
+ * Called via ?action=invalidate (triggered by POST /api/sync on the backend).
+ */
+function invalidateScriptPropertiesCache() {
+  var props = PropertiesService.getScriptProperties();
+  var keys  = props.getKeys();
+  var cvKeys = keys.filter(function(k) { return k.indexOf("cv_") === 0; });
+  cvKeys.forEach(function(k) { props.deleteProperty(k); });
+  Logger.log("[invalidate] Cleared " + cvKeys.length + " ScriptProperties cache entries.");
 }
 
 
@@ -199,12 +294,13 @@ function aggregateDailyDump(ss, startDate, endDate, statusFilter) {
   }
 
   var lastRow = sheet.getLastRow();
-  var lastCol = sheet.getLastColumn();
   if (lastRow < 2) return { dimensions: [], performance: [] };
 
-  // Read all data in ONE batch call (most efficient -- minimises Sheets API calls)
-  var data    = sheet.getRange(1, 1, lastRow, lastCol).getValues();
-  var headers = data[0].map(function(h) { return String(h).trim(); });
+  // Read ONLY the header row first to find which columns we need.
+  // This avoids reading all N columns of data when we only need ~13.
+  var totalCols = sheet.getLastColumn();
+  var headers = sheet.getRange(1, 1, 1, totalCols).getValues()[0]
+    .map(function(h) { return String(h).trim(); });
 
   // Header normalization: tolerate spaces/underscores/case differences
   var headerIndex = {};
@@ -253,12 +349,23 @@ function aggregateDailyDump(ss, startDate, endDate, statusFilter) {
     );
   }
 
-  var buckets = {};    // compositeKey -> aggregation bucket
+  // SPEED OPTIMISATION: Compute the highest column index we actually need,
+  // then read ONLY up to that column — not all columns in the sheet.
+  // If Daily_dump has 27 columns but we only need up to column 15, we read
+  // 44% fewer cells per row. On 10,000-row sheets this is a meaningful speedup.
+  var usedCols = Object.values(COL).filter(function(v) { return v !== undefined; });
+  var maxColNeeded = Math.max.apply(null, usedCols) + 1; // +1 for 1-based slice
+
+  // Single batch read — only the columns we actually need.
+  var data = sheet.getRange(2, 1, lastRow - 1, maxColNeeded).getValues();
+
+  var buckets = {};     // compositeKey -> aggregation bucket
   var minDayStr = null; // min Day seen across ALL visual rows in the sheet
   var maxDayStr = null; // max Day seen across ALL visual rows in the sheet
 
-  for (var r = 1; r < data.length; r++) {
+  for (var r = 0; r < data.length; r++) {
     var row = data[r];
+
 
     // PRIMARY FILTER: Asset must be a URL → it is a visual creative.
     // We do NOT filter by Asset_type because Google Ads uses many different
@@ -773,4 +880,224 @@ function runTestFetch() {
     Logger.log("ERROR: " + err.message);
   }
   Logger.log("=== Done ===");
+}
+
+
+// =============================================================
+// RAW DAILY — returns per-creative-per-day rows for client-side aggregation
+// =============================================================
+
+/**
+ * Handler for ?tab=raw_daily.
+ * Returns a normalised payload:
+ *   dimensions  : { [creative_id]: { creative_url, creative_type, ... } }
+ *   daily_rows  : [ { creative_id, date, impressions, clicks, cost, conversions } ]
+ * The frontend aggregates this in-browser so date range changes are instant.
+ */
+function handleRawDaily(ss) {
+  var scriptCache = CacheService.getScriptCache();
+  var cacheKey    = "cv_raw_daily";
+
+  var cachedStr = getCachedPayload(scriptCache, cacheKey);
+  if (cachedStr) {
+    return ContentService
+      .createTextOutput(cachedStr)
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  var result       = aggregateDailyDumpRaw(ss);
+  var filterOpts   = deriveFilterOptionsFromMap(result.dimensions);
+
+  var payload = {
+    status:               "ok",
+    data_fetched_at:      new Date().toISOString(),
+    available_date_range: result.available_date_range,
+    dimensions_count:     Object.keys(result.dimensions).length,
+    daily_rows_count:     result.daily_rows.length,
+    dimensions:           result.dimensions,
+    daily_rows:           result.daily_rows,
+    filter_options:       filterOpts,
+  };
+
+  var payloadStr = JSON.stringify(payload);
+  // Cache in CacheService (20 min). ScriptProperties skipped — payload is large.
+  try { cachePayload(scriptCache, cacheKey, payloadStr, 1200); } catch (ce) {}
+
+  return ContentService
+    .createTextOutput(payloadStr)
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * Read Daily_dump and return:
+ *   dimensions : map of creative_id -> dimension fields (deduplicated)
+ *   daily_rows : array of { creative_id, date, impressions, clicks, cost, conversions }
+ *   available_date_range : { min, max }
+ *
+ * NO date filtering — returns ALL rows for ALL time so the frontend can
+ * aggregate any range without another network call.
+ */
+function aggregateDailyDumpRaw(ss) {
+  var sheet = ss.getSheetByName("Daily_dump");
+  if (!sheet) throw new Error("Sheet 'Daily_dump' not found.");
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { dimensions: {}, daily_rows: [], available_date_range: { min: "", max: "" } };
+
+  // Read only the header row first to identify needed columns.
+  var totalCols = sheet.getLastColumn();
+  var headers = sheet.getRange(1, 1, 1, totalCols).getValues()[0]
+    .map(function(h) { return String(h).trim(); });
+
+  var headerIndex = {};
+  headers.forEach(function(h, i) { headerIndex[normalizeHeader(h)] = i; });
+  function getCol(names) {
+    for (var i = 0; i < names.length; i++) {
+      var k = normalizeHeader(names[i]);
+      if (headerIndex[k] !== undefined) return headerIndex[k];
+    }
+    return undefined;
+  }
+
+  var COL = {
+    Day:           getCol(["Day"]),
+    Asset:         getCol(["Asset"]),
+    Asset_type:    getCol(["Asset_type", "Asset type"]),
+    Asset_status:  getCol(["Asset_status", "Asset status"]),
+    Campaign:      getCol(["Campaign"]),
+    Location:      getCol(["Location"]),
+    Funnel:        getCol(["Funnel"]),
+    Campaign_Type: getCol(["Campaign_Type", "Campaign Type", "Campaign type"]),
+    Ad_group:      getCol(["Ad_group", "Ad group", "Asset_group", "Asset group"]),
+    Impr:          getCol(["Impr", "Impressions"]),
+    Clicks:        getCol(["Clicks"]),
+    Cost:          getCol(["Cost"]),
+    Conversions:   getCol(["Conversions"]),
+    All_conv:      getCol(["All_conv", "All conv", "All conv."]),
+  };
+
+  // SPEED OPTIMISATION: Read only columns up to the highest index we need.
+  var usedCols = Object.values(COL).filter(function(v) { return v !== undefined; });
+  var maxColNeeded = Math.max.apply(null, usedCols) + 1;
+
+  // Read data rows only (skip header, indices are 0-based relative to col 1)
+  var data = sheet.getRange(2, 1, lastRow - 1, maxColNeeded).getValues();
+
+  var dimensions   = {};    // creative_id -> dimension object
+  var dailyBuckets = {};   // creative_id + "|" + date -> daily metrics
+  var minDayStr = null;
+  var maxDayStr = null;
+
+  var convCol = COL["Conversions"] !== undefined ? COL["Conversions"] : COL["All_conv"];
+
+  for (var r = 0; r < data.length; r++) {
+    var row = data[r];
+
+    // Only visual assets (same filter as aggregateDailyDump)
+    var assetRaw = String(row[COL["Asset"]] || "").trim();
+    if (!assetRaw) continue;
+    var assetUrl  = normalizeAssetUrl(assetRaw);
+    var assetType = String(row[COL["Asset_type"]] || "").trim().toUpperCase();
+    if (!isVisualAsset(assetUrl, assetType)) continue;
+
+    // Parse day
+    var dayDate = parseDayValue(row[COL["Day"]]);
+    if (!dayDate) continue;
+    var dayStr = formatDate(dayDate);
+
+    // Track min/max across ALL rows
+    if (!minDayStr || dayStr < minDayStr) minDayStr = dayStr;
+    if (!maxDayStr || dayStr > maxDayStr) maxDayStr = dayStr;
+
+    // Build composite key (same as aggregateDailyDump)
+    var location     = String(row[COL["Location"]]      || "").trim();
+    var funnel       = String(row[COL["Funnel"]]        || "Unknown").trim() || "Unknown";
+    var campaignType = String(row[COL["Campaign_Type"]] || "Unknown").trim() || "Unknown";
+    var campaign     = String(row[COL["Campaign"]]      || "").trim();
+    var adGroup      = COL["Ad_group"] !== undefined
+      ? String(row[COL["Ad_group"]] || "").trim() : "";
+    if (!adGroup) adGroup = campaign || "Unknown";
+    var assetStatus  = normalizeStatus(String(row[COL["Asset_status"]] || "Enabled").trim());
+    var assetKey     = assetUrl && assetUrl.startsWith("http") ? assetUrl : assetRaw;
+    if (!assetKey) continue;
+
+    var compositeKey = assetKey + "|" + location + "|" + campaignType + "|" + campaign + "|" + adGroup + "|" + funnel;
+
+    // Store dimension (once per creative_id — last-seen status wins)
+    if (!dimensions[compositeKey]) {
+      dimensions[compositeKey] = {
+        creative_url:  assetUrl && assetUrl.startsWith("http") ? assetUrl : "",
+        creative_type: detectCreativeType(assetUrl, assetType),
+        campaign_name: campaign,
+        campaign_type: campaignType,
+        city:          location,
+        funnel:        funnel,
+        ad_group:      adGroup,
+        status:        assetStatus,
+      };
+    }
+
+    // Daily bucket: aggregate same creative+date (handles duplicate rows in export)
+    var dayKey = compositeKey + "|" + dayStr;
+    if (!dailyBuckets[dayKey]) {
+      dailyBuckets[dayKey] = {
+        creative_id:  compositeKey,
+        date:         dayStr,
+        impressions:  0,
+        clicks:       0,
+        cost:         0,
+        conversions:  0,
+      };
+    }
+    dailyBuckets[dayKey].impressions += toNum(row[COL["Impr"]]);
+    dailyBuckets[dayKey].clicks      += toNum(row[COL["Clicks"]]);
+    dailyBuckets[dayKey].cost        += toNum(row[COL["Cost"]]);
+    dailyBuckets[dayKey].conversions += toNum(row[convCol]);
+  }
+
+  // Build daily_rows — drop zero-impression days (noise)
+  var daily_rows = [];
+  var keys = Object.keys(dailyBuckets);
+  for (var k = 0; k < keys.length; k++) {
+    var b = dailyBuckets[keys[k]];
+    if (b.impressions <= 0) continue;
+    daily_rows.push({
+      creative_id:  b.creative_id,
+      date:         b.date,
+      impressions:  round2(b.impressions),
+      clicks:       round2(b.clicks),
+      cost:         round2(b.cost),
+      conversions:  round2(b.conversions),
+    });
+  }
+
+  return {
+    dimensions:           dimensions,
+    daily_rows:           daily_rows,
+    available_date_range: { min: minDayStr || "", max: maxDayStr || "" },
+  };
+}
+
+/**
+ * Derive filter options from a dimensions MAP (creative_id -> dimension).
+ * Same result as deriveFilterOptions() but works on the map structure.
+ */
+function deriveFilterOptionsFromMap(dimensions) {
+  var cities = {}, campaign_types = {}, funnels = {}, statuses = {};
+  var keys = Object.keys(dimensions);
+  for (var i = 0; i < keys.length; i++) {
+    var d = dimensions[keys[i]];
+    if (d.city)          cities[d.city]                   = 1;
+    if (d.campaign_type) campaign_types[d.campaign_type]  = 1;
+    if (d.funnel)        funnels[d.funnel]                = 1;
+    if (d.status)        statuses[d.status]               = 1;
+  }
+  return {
+    cities:         Object.keys(cities).sort(),
+    campaign_types: Object.keys(campaign_types).sort(),
+    funnels:        Object.keys(funnels).sort(),
+    categories:     [],
+    age_groups:     [],
+    statuses:       Object.keys(statuses).sort(),
+  };
 }

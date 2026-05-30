@@ -3,7 +3,7 @@
 > **Document Type:** Single Source of Truth (SSOT)
 > **Author:** Sourabh Chaudhari
 > **Project:** CreativeVisibility Portal
-> **Last Updated:** 2026-05-28
+> **Last Updated:** 2026-05-30
 > **Zero Tolerance Policy:** This is a high-budget project managing lakhs of rupees monthly in Google Ads spend. Any deviation from this specification without explicit written approval is unacceptable. AI agents working on this project must read this document in full before writing a single line of code.
 
 ---
@@ -1475,6 +1475,16 @@ useEffect(() => {
   - Force the selected theme's colours
   - Keep image URLs as clickable verification links in the PDF
 
+**Context-Aware Export (implemented 2026-05-30):**
+When the user clicks "Export PDF", the modal automatically inherits the complete current dashboard state — it does not open blank. The modal pre-fills with:
+- Active date range
+- Active filters (status, city, funnel, search)
+- Selected funnel and campaign/ad group selection
+- Active hierarchy level and grouping
+- Current metric column selection and sorting
+
+The user immediately sees a report context that reflects exactly what they were analysing. They can optionally adjust export-specific settings (hierarchy depth, density, branding, number of creatives, summary vs. detail mode) before confirming. Filters are never reset on modal open. See Section 13.3 for the full specification.
+
 ### 9.10 Row Height Slider
 A unique feature not in the original spec — the `RowHeightControl` component:
 - Slider range: 40px to 1500px
@@ -1725,6 +1735,97 @@ Using browser print preserves all hyperlinks as active and clickable in the save
 
 ---
 
+### 13.3 Context-Aware Export — Dashboard State Inheritance
+
+> **Status:** Implemented 2026-05-30 by Sourabh Chaudhari.
+
+#### Philosophy
+The export flow must feel seamless and context-aware. The client should never feel like they are creating a report from scratch. The experience should be:
+
+> "Take my current analysis and turn it into a polished professional report."
+
+#### What "Current Dashboard State" Means
+When the user opens the Export PDF modal, the following active dashboard context is **automatically inherited**:
+
+| Dashboard State | What Is Captured |
+|---|---|
+| **Date range** | Active `startDate` and `endDate` from the filter panel |
+| **Status filter** | All / Enabled / Paused — current selection |
+| **City filter** | Currently selected city (or All) |
+| **Funnel filter** | TOFU / MOFU / All — current selection |
+| **Campaign / ad group selection** | Which nodes in the GroupingSidebar are currently selected (`selected` Set) |
+| **Platform / source** | Currently active campaign type filter (if applicable) |
+| **Search / text filter** | Any active search query |
+| **Active sorting** | Current sort metric and direction applied to DirectoryTree |
+| **Metric column selection** | Which KPI columns are currently visible (`columns` state) |
+| **Hierarchy / grouping** | Active `hierarchy` dimension order and `activeKey` group |
+
+The export system uses the **exact same `filteredCreatives` + `aggregated` dataset** currently active on screen — not a re-query or a reset.
+
+#### Important UX Clarification
+This does **not** mean exporting only the visible viewport or screen area.
+
+It means: export the report using the currently applied dashboard context and selections as the data source. If the user is viewing a filtered, sorted, grouped subset of creatives, the PDF is generated from that exact subset.
+
+**Example:** If the user has:
+- Selected "Last 30 Days"
+- Filtered to Mumbai campaigns only
+- Opened only the TOFU funnel
+- Chosen Meta / Performance Max campaign type
+- Sorted by highest spend
+
+Then the PDF automatically generates using exactly that dashboard state — the user does not touch any filter inside the modal.
+
+#### Export Modal Behaviour on Open
+When the modal opens:
+1. **Pre-load current state** — all active filters and selections are read from `index.tsx` state and passed as props to `ExportModal`
+2. **Show active date range** — displayed as a read-only summary at the top of the modal
+3. **Show active hierarchy level** — e.g. "City → Funnel → Campaign Type"
+4. **Show active filter summary** — e.g. "Mumbai · Enabled · TOFU · Last 30 Days"
+5. **Reflect analytical context automatically** — the user immediately understands the report is already prepared for their current analysis
+
+#### Smart Default Behaviour
+- Modal opens with current dashboard state as the default — never a blank/reset state
+- No filters are ever reset on modal open
+- User workflow continuity is preserved throughout
+
+#### Optional Adjustments Inside the Modal
+After inheriting the dashboard state, the user **may optionally** modify export-specific settings. These layer on top of the current context — they do not replace it:
+
+| Adjustable Setting | Options |
+|---|---|
+| Export hierarchy level | Which grouping depth to include in the report |
+| Included sections | Top Performers, Creative Grid, Summary Tiles, Charts |
+| Report density | Compact / Standard / Detailed |
+| Branding | Include / hide logo and brand header |
+| Layout type | Grid / List / Presentation |
+| Number of creatives shown | Top 5 / 10 / 20 / All |
+| Report mode | Summary (aggregated totals only) vs. Detailed (individual creative rows) |
+| PDF theme | Plain White / Dark Theme |
+
+#### Frontend Implementation Notes
+`ExportModal` receives the full current state as props from `index.tsx`:
+
+```typescript
+// ExportModal receives these props from the parent Portal component
+interface ExportModalProps {
+  open: boolean;
+  onClose: () => void;
+  // Dashboard state passed in — never derived fresh inside the modal
+  filters: Filters;            // active date range, status, city, funnel, search
+  selected: Set<string>;       // which creative IDs are currently selected
+  hierarchy: Dim[];            // active grouping dimension order
+  activeKey: string;           // currently active sidebar group key
+  columns: Record<string, boolean>; // visible metric columns
+  visibleRows: CreativeRow[];  // the exact dataset currently on screen
+  totals: ComputedMetrics;     // grand totals for the visible set
+}
+```
+
+The modal must **never** call its own fresh API fetch or compute its own filter state. It operates exclusively on the props passed from the parent. This is the single source of truth for what gets exported.
+
+---
+
 ## 14. Edge Cases & Guardrails
 
 Every edge case below MUST be handled. These are not optional — they are non-negotiable stability requirements for a high-budget client account.
@@ -1843,3 +1944,12 @@ Every edge case below MUST be handled. These are not optional — they are non-n
 ### 2026-05-28 — Ads Agent Created
 > **Context:** Sourabh Chaudhari requested a specialized AI subagent with exhaustive Google Ads knowledge to support operations, copy generation, and validations.
 > **Decisions:** Defined `ads_agent` with 13-section encyclopedic profile. Author declared as Sourabh Chaudhari inside the system prompt and profile file.
+
+### 2026-05-30 — Export PDF: Context-Aware Dashboard State Inheritance
+> **Context:** The original Export PDF flow opened a blank modal where users picked a theme and clicked print. This created friction — the user felt like they were starting a report from scratch rather than exporting their current analysis.
+> **Problem:** Export modal had no awareness of what the user was currently analysing. Filters, date range, hierarchy, and selection had to be mentally re-applied by the user.
+> **Decision:** `ExportModal` now receives the complete current dashboard state as props (`filters`, `selected`, `hierarchy`, `activeKey`, `columns`, `visibleRows`, `totals`) from the parent `Portal` component in `index.tsx`. The modal pre-fills and displays the active context on open. Users see their current date range, active filters, and hierarchy reflected immediately.
+> **Philosophy:** The export experience should feel like "take my current analysis and turn it into a polished professional report" — not "create a new report from scratch."
+> **Key constraint:** The modal must never re-fetch data or compute its own filter state. It operates exclusively on the props passed from the parent. `visibleRows` is the exact same dataset currently on screen.
+> **Optional adjustments preserved:** Users can still modify export-specific settings (hierarchy depth, included sections, density, branding, layout type, number of creatives, summary vs. detail mode, PDF theme) — but these layer on top of the inherited dashboard context, they do not replace it.
+> **Documented in:** Section 9.9 and Section 13.3 of this document.

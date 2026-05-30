@@ -1,27 +1,33 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import {
-  Gem, Sparkles, Moon, Sun, LayoutGrid, Trophy, Database,
-  IndianRupee, MousePointerClick, Eye, Target, PanelLeftClose,
-  PanelLeftOpen, Network, Maximize2, RefreshCw, AlertTriangle,
-  Loader2,
+  Gem, Sparkles, Moon, Sun, LayoutGrid, Trophy,
+  IndianRupee, MousePointerClick, Eye, Coins, PanelLeftClose,
+  PanelLeftOpen, RefreshCw, AlertTriangle,
+  Loader2, FileDown, Percent,
 } from "lucide-react";
 
 // ── API ───────────────────────────────────────────────────────────────────────
-import { fetchPerformance, fetchCurrentStructure, syncCache, type Creative, type FilterOptions } from "@/lib/api";
+import {
+  fetchRawPerformance, fetchCurrentStructure, syncCache,
+  type Creative, type FilterOptions, type RawDailyRow, type CreativeDimensionMap,
+} from "@/lib/api";
+import { idbClear } from "@/lib/idb";
+import { exportPdf } from "@/lib/exportPdf";
 
 // ── Lib ───────────────────────────────────────────────────────────────────────
+import { aggregateByDateRange, deriveFilterOptions as deriveFO, sortDailyRows } from "@/lib/aggregator";
 import { computeMetrics, fmtINR, fmtINR0, fmtNum, fmtPct, type ComputedMetrics } from "@/lib/metrics";
 import { GroupingSidebar, type SidebarMode } from "@/components/GroupingSidebar";
-import { type Dim, DEFAULT_HIERARCHY } from "@/lib/hierarchy";
+import { type Dim, DEFAULT_HIERARCHY, DIM_META, HIERARCHY_PRESETS } from "@/lib/hierarchy";
 import { DirectoryTree } from "@/components/DirectoryTree";
 import { TopPerformers } from "@/components/TopPerformers";
 import { FilterPanel, type Filters } from "@/components/FilterPanel";
-import { ExportModal } from "@/components/ExportModal";
+import { ExportModal, type ExportPick } from "@/components/ExportModal";
 import { SavedViewsMenu } from "@/components/SavedViewsMenu";
 import { CreativeDetailModal } from "@/components/CreativeDetailModal";
 import { readSharedViewFromHash, clearShareHash } from "@/lib/savedViews";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+// Tabs replaced with custom switcher for full style control
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
@@ -47,7 +53,21 @@ export const Route = createFileRoute("/")(({
 
 const DEFAULT_COLS = {
   impressions: true, clicks: true, cost: true, conversions: false,
-  ctr: true, cpc: true, cpm: false, cr: false, cpa: true,
+  ctr: true, cpc: true, cpm: false, cr: false, cpa: false,
+  share_pct: false,
+};
+
+const COL_LABELS: Record<string, string> = {
+  impressions: "Impressions",
+  clicks: "Clicks",
+  cost: "Spend",
+  conversions: "Conversions",
+  ctr: "CTR",
+  cpc: "CPC",
+  cpm: "CPM",
+  cr: "CR",
+  cpa: "CPA",
+  share_pct: "% Share",
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -61,7 +81,10 @@ function Portal() {
   // ── UI State ─────────────────────────────────────────────────────────────
   const [filters, setFilters] = useState<Filters>({
     startDate: startDef, endDate: endDef,
-    status: "Enabled", city: "All", funnel: "All", search: "",
+    compareMode: false,
+    status: ["Enabled"], city: [], funnel: [],
+    campaign_type: [], campaign_name: [],
+    search: "",
   });
   const [hierarchy, setHierarchy] = useState<Dim[]>(DEFAULT_HIERARCHY);
   const [sidebarOpen, setSidebarOpen]   = useState(true);
@@ -71,17 +94,30 @@ function Portal() {
   const [rankMetric, setRankMetric]     = useState<"ctr" | "conversions" | "cpc" | "cpa">("ctr");
   const [mode, setMode]                 = useState<SidebarMode>("report");
   const [rowHeight, setRowHeight]       = useState<number>(96);
+  const [sortBy, setSortBy]             = useState<string | null>(null);
   const [activeKey, setActiveKey]       = useState<string>("ALL");
+  const [pdfLoading, setPdfLoading]     = useState(false);
+  const [activeTab, setActiveTab]       = useState<"directory" | "top">("directory");
 
-  // ── API State ─────────────────────────────────────────────────────────────
-  const [creatives, setCreatives]           = useState<Creative[]>([]);
-  const [filterOptions, setFilterOptions]   = useState<FilterOptions>({
-    cities: [], campaign_types: [], categories: [], age_groups: [], funnels: [], statuses: [],
+  // ── Raw data (loaded once, aggregated client-side) ────────────────────────────────
+  const [rawDimensions, setRawDimensions] = useState<CreativeDimensionMap>({});
+  const [rawDailyRows,  setRawDailyRows]  = useState<RawDailyRow[]>([]);
+  const [filterOptions, setFilterOptions] = useState<FilterOptions>({
+    cities: [], campaign_types: [], campaign_names: [], categories: [], age_groups: [], funnels: [], statuses: [],
   });
   const [availableRange, setAvailableRange] = useState<{ min: string; max: string } | null>(null);
-  const [loading, setLoading]   = useState(true);
-  const [syncing, setSyncing]   = useState(false);
-  const [error, setError]       = useState<string | null>(null);
+  const [loading, setLoading]     = useState(true);
+  const [loadingSecs, setLoadingSecs] = useState(0);
+  const [splashVisible, setSplashVisible] = useState(true); // full-screen splash
+  const [syncing, setSyncing]     = useState(false);
+  const [error, setError]         = useState<string | null>(null);
+
+  // ── creatives: date-range aggregation (client-side, instant) ──────────────────────
+  // Recomputes in < 10ms whenever date range changes — no network call.
+  const creatives = useMemo(
+    () => aggregateByDateRange(rawDimensions, rawDailyRows, filters.startDate || undefined, filters.endDate || undefined),
+    [rawDimensions, rawDailyRows, filters.startDate, filters.endDate],
+  );
 
   // ── Current Structure State ─────────────────────────────────────
   const [structureCreatives, setStructureCreatives] = useState<Creative[]>([]);
@@ -91,7 +127,6 @@ function Portal() {
 
   // Auto-sets date pickers to sheet's actual date range on first load (once only)
   const datesInitialized = useRef(false);
-  const skipNextFetch = useRef(false);
 
   // ── Selected creatives ────────────────────────────────────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -158,36 +193,48 @@ function Portal() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Main data fetch ───────────────────────────────────────────────────────
-  const loadData = useCallback(async (start?: string, end?: string, status?: Filters["status"], quiet = false) => {
-    if (!quiet) setLoading(true);
+  // ── Main data fetch (loads raw daily rows ONCE) ──────────────────────────────
+  const loadRawData = useCallback(async (quiet = false) => {
+    const startTime = Date.now();
+    if (!quiet) { setLoading(true); setLoadingSecs(0); }
     setError(null);
+
+    // ── IndexedDB stale-while-revalidate ─────────────────────────────────────
+    // On revisit: IDB entry is served instantly (<5ms) while we re-validate
+    // with If-None-Match. If backend returns 304, we're done immediately.
+    // On first visit: IDB is empty, we wait for the full network response.
+    // fetchRawPerformance() handles all IDB read/write and ETag logic internally.
+    //
+    // Unlike localStorage:
+    //   • No synchronous JSON.parse blocking the main thread
+    //   • No 5MB quota limit (handles large Daily_dump exports)
+    //   • Atomic transactions — no torn reads from partial writes
     try {
-      const useRange = !!start && !!end;
-      const useStatus = status && status !== "All" ? status : undefined;
-      const data = await fetchPerformance(useRange ? start : undefined, useRange ? end : undefined, useStatus);
-      setCreatives(data.creatives);
-      setFilterOptions(data.filter_options);
-      if (data.available_date_range?.min && data.available_date_range?.max) {
-        setAvailableRange({ min: data.available_date_range.min, max: data.available_date_range.max });
+      const data = await fetchRawPerformance();
+
+      // Sort daily_rows by date ONCE so aggregateByDateRange() can binary-search.
+      const sortedRows = sortDailyRows(data.daily_rows ?? []);
+
+      setRawDimensions(data.dimensions);
+      setRawDailyRows(sortedRows);
+      setFilterOptions(deriveFO(data.dimensions));
+
+      const ar = data.available_date_range;
+      if (ar?.min && ar?.max) {
+        setAvailableRange({ min: ar.min, max: ar.max });
+        if (!datesInitialized.current) {
+          datesInitialized.current = true;
+          setFilters(prev => ({ ...prev, startDate: ar.min, endDate: ar.max }));
+        }
       }
-      // Select all on first load
-      setSelected(prev => prev.size === 0
-        ? new Set(data.creatives.map(c => c.creative_id))
-        : prev
-      );
-      // Auto-set date pickers to the sheet's actual date range (first load only)
-      if (!datesInitialized.current && data.available_date_range?.min && data.available_date_range?.max) {
-        datesInitialized.current = true;
-        skipNextFetch.current = true;
-        setFilters(prev => ({
-          ...prev,
-          startDate: data.available_date_range!.min,
-          endDate:   data.available_date_range!.max,
-        }));
-      }
+
+      setSelected(prev => {
+        if (prev.size > 0) return prev;
+        return new Set(Object.keys(data.dimensions));
+      });
+
       if (!quiet && data.served_from_cache) {
-        toast.info("Served from cache", { description: "Data is up to 15 min old. Hit sync to refresh." });
+        toast.info("Served from cache", { description: "Data is up to 30 min old. Hit sync to refresh." });
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
@@ -195,31 +242,34 @@ function Portal() {
       if (!quiet) toast.error("Failed to load data", { description: msg });
     } finally {
       setLoading(false);
+      // Keep splash visible for a minimum of 5 seconds from load start
+      const elapsed = Date.now() - startTime;
+      const delay = Math.max(300, 5_000 - elapsed);
+      setTimeout(() => setSplashVisible(false), delay);
     }
   }, []);
 
-  // Fetch on mount
-  useEffect(() => { loadData(filters.startDate, filters.endDate, filters.status); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Re-fetch when date range changes
+  // ── Splash elapsed timer (counts while splash is on screen, not just while loading) ─
   useEffect(() => {
-    if (skipNextFetch.current) {
-      skipNextFetch.current = false;
-      return;
-    }
-    if (!loading) loadData(filters.startDate, filters.endDate, filters.status, true);
-  }, [filters.startDate, filters.endDate, filters.status]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!splashVisible) { setLoadingSecs(0); return; }
+    const id = setInterval(() => setLoadingSecs(s => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [splashVisible]);
+
+  // Fetch raw data on mount (only once per session)
+  useEffect(() => { loadRawData(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Force sync ────────────────────────────────────────────────────────────
   const handleSync = async () => {
     setSyncing(true);
-    // Also clear structure cache so next switch re-fetches
     structureFetched.current = false;
     setStructureCreatives([]);
     try {
       await syncCache();
-      await loadData(filters.startDate, filters.endDate, filters.status);
-      toast.success("Synced", { description: "Cache cleared and refreshed." });
+      // Clear IDB so the next fetchRawPerformance() does a full re-fetch
+      await idbClear();
+      await loadRawData();
+      toast.success("Synced", { description: "All caches cleared and refreshed." });
     } catch (err) {
       toast.error("Sync failed", { description: err instanceof Error ? err.message : "Unknown error" });
     } finally {
@@ -250,15 +300,17 @@ function Portal() {
       .finally(() => setStructureLoading(false));
   }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Filtered creatives (dimension-level) ──────────────────────────────────
+  // ── Filtered creatives (status / city / funnel / search — all client-side) ─────────
   const filteredCreatives = useMemo(() => {
     return creatives.filter(c => {
-      if (filters.status !== "All" && c.status !== filters.status) return false;
-      if (filters.city   !== "All" && c.city   !== filters.city)   return false;
-      if (filters.funnel !== "All" && c.funnel  !== filters.funnel) return false;
+      if (filters.status.length        > 0 && !filters.status.includes(c.status))               return false;
+      if (filters.city.length          > 0 && !filters.city.includes(c.city))                   return false;
+      if (filters.funnel.length        > 0 && !filters.funnel.includes(c.funnel))               return false;
+      if (filters.campaign_type.length > 0 && !filters.campaign_type.includes(c.campaign_type)) return false;
+      if (filters.campaign_name.length > 0 && !filters.campaign_name.includes(c.campaign_name)) return false;
       if (filters.search) {
         const q = filters.search.toLowerCase();
-        const hay = [c.campaign_name, c.city, c.category, c.headline, c.description]
+        const hay = [c.campaign_name, c.ad_group, c.city, c.category, c.headline, c.description]
           .join(" ").toLowerCase();
         if (!hay.includes(q)) return false;
       }
@@ -304,6 +356,123 @@ function Portal() {
     return computeMetrics(t);
   }, [visibleRows]);
 
+  // ── Compare period: per-creative map + grand totals ──────────────────────
+  const compareData = useMemo(() => {
+    if (!filters.compareMode || !filters.startDate || !filters.endDate) return null;
+    const n      = Math.round((new Date(filters.endDate).getTime() - new Date(filters.startDate).getTime()) / 86_400_000) + 1;
+    const cEndMs = new Date(filters.startDate).getTime() - 86_400_000;
+    const cEnd   = new Date(cEndMs).toISOString().slice(0, 10);
+    const cStart = new Date(cEndMs - (n - 1) * 86_400_000).toISOString().slice(0, 10);
+
+    const cCreatives = aggregateByDateRange(rawDimensions, rawDailyRows, cStart, cEnd)
+      .filter(c => {
+        if (filters.status.length > 0 && !filters.status.includes(c.status)) return false;
+        if (filters.city.length   > 0 && !filters.city.includes(c.city))     return false;
+        if (filters.funnel.length > 0 && !filters.funnel.includes(c.funnel)) return false;
+        return true;
+      });
+    if (cCreatives.length === 0) return null;
+
+    const map = new Map<string, ComputedMetrics>();
+    const t   = { impressions: 0, clicks: 0, cost: 0, conversions: 0 };
+    for (const c of cCreatives) {
+      const m = computeMetrics({ impressions: c.impressions, clicks: c.clicks, cost: c.cost, conversions: c.conversions });
+      map.set(c.creative_id, m);
+      t.impressions += c.impressions;
+      t.clicks      += c.clicks;
+      t.cost        += c.cost;
+      t.conversions += c.conversions;
+    }
+    return { map, totals: computeMetrics(t) };
+  }, [filters.compareMode, filters.startDate, filters.endDate, rawDimensions, rawDailyRows, filters.status, filters.city, filters.funnel]);
+
+  const compareTotals     = compareData?.totals ?? null;
+  const compareMetricsMap = compareData?.map    ?? null;
+
+  const pctDelta = (current: number, prev: number | null | undefined): number | null => {
+    if (!prev || prev === 0) return null;
+    return ((current - prev) / Math.abs(prev)) * 100;
+  };
+
+  // ── "No data for selected date range" flag ────────────────────────────────
+  // True when raw data is loaded but the selected window returns zero creatives
+  const dataLoaded     = !loading && rawDailyRows.length > 0;
+  const noDataForRange = dataLoaded && creatives.length === 0 && !!(filters.startDate || filters.endDate);
+
+  // ── Compare-period validation warning ────────────────────────────────────
+  type CmpWarning = { kind: "no_data" | "partial"; cStart: string; cEnd: string; dataMin?: string };
+  const compareWarning = useMemo((): CmpWarning | null => {
+    if (!filters.compareMode || !filters.startDate || !filters.endDate || loading) return null;
+    const n      = Math.round((new Date(filters.endDate).getTime() - new Date(filters.startDate).getTime()) / 86_400_000) + 1;
+    const cEndMs = new Date(filters.startDate).getTime() - 86_400_000;
+    const cEnd   = new Date(cEndMs).toISOString().slice(0, 10);
+    const cStart = new Date(cEndMs - (n - 1) * 86_400_000).toISOString().slice(0, 10);
+    if (!compareData)                                         return { kind: "no_data", cStart, cEnd };
+    if (availableRange && cStart < availableRange.min)        return { kind: "partial", cStart, cEnd, dataMin: availableRange.min };
+    return null;
+  }, [filters.compareMode, filters.startDate, filters.endDate, compareData, availableRange, loading]);
+
+  const hierarchyLabel = useMemo(
+    () => hierarchy.map(d => DIM_META[d].label).join(" | "),
+    [hierarchy],
+  );
+  const selectionLabel = useMemo(() => {
+    if (activeKey === "ALL")   return "All creatives";
+    if (activeKey === "MULTI") return `${selected.size} creatives selected`;
+    return activeKey.split("::").join(" | ");
+  }, [activeKey, selected.size]);
+  const columnLabels = useMemo(
+    () => Object.entries(columns).filter(([, v]) => v).map(([k]) => COL_LABELS[k] ?? k),
+    [columns],
+  );
+  const sortLabel = useMemo(
+    () => (sortBy ? (COL_LABELS[sortBy] ?? sortBy) : "Default (A-Z)"),
+    [sortBy],
+  );
+  const dateRangeLabel = filters.startDate && filters.endDate
+    ? `${filters.startDate} to ${filters.endDate}`
+    : "All dates";
+  const hierarchyOptions = useMemo(
+    () => [
+      { id: "current", label: `Current | ${hierarchyLabel}` },
+      ...HIERARCHY_PRESETS.map(p => ({ id: p.id, label: p.label })),
+    ],
+    [hierarchyLabel],
+  );
+  const exportContext = useMemo(() => ({
+    modeLabel: mode === "structure" ? "Structure" : "Report",
+    dateRange: dateRangeLabel,
+    filters: {
+      status: filters.status,
+      city: filters.city,
+      funnel: filters.funnel,
+      search: filters.search,
+    },
+    hierarchyLabel,
+    selectionLabel,
+    selectedCount: selected.size,
+    totalCount: creatives.length,
+    sortLabel,
+    rankMetric: mode === "report" ? rankMetric : undefined,
+    columnsLabel: columnLabels.length ? columnLabels.join(", ") : "None",
+    rowHeight,
+  }), [
+    mode,
+    dateRangeLabel,
+    filters.status,
+    filters.city,
+    filters.funnel,
+    filters.search,
+    hierarchyLabel,
+    selectionLabel,
+    selected.size,
+    creatives.length,
+    sortLabel,
+    rankMetric,
+    columnLabels,
+    rowHeight,
+  ]);
+
   // ── Export CSV ────────────────────────────────────────────────────────────
   const handleExportCSV = () => {
     const headers = [
@@ -327,11 +496,73 @@ function Portal() {
     toast.success(`Exported ${visibleRows.length} creatives to CSV`);
   };
 
-  const handleExportPDF = (printTheme: "light" | "dark") => {
+  const handleExportPDF = async ({ theme, scope, hierarchyId, rowHeight: rowHeightOverride }: ExportPick) => {
     setExportOpen(false);
-    const el = document.getElementById("print-root");
-    if (el) el.setAttribute("data-print-theme", printTheme);
-    setTimeout(() => window.print(), 100);
+    setPdfLoading(true);
+    const modeLabel = mode === "structure" ? "Structure" : "Report";
+
+    const prev = {
+      hierarchy,
+      rowHeight,
+      activeKey,
+      selected: new Set(selected),
+    };
+
+    const allIds = creatives.map(c => c.creative_id);
+    let exportHierarchy = hierarchy;
+    const preset = hierarchyId !== "current"
+      ? HIERARCHY_PRESETS.find(p => p.id === hierarchyId)
+      : null;
+    if (preset) exportHierarchy = preset.dims;
+
+    let exportSelectionLabel = selectionLabel;
+    let exportSelectedCount = selected.size;
+    if (scope === "all") {
+      setActiveKey("ALL");
+      setSelected(new Set(allIds));
+      exportSelectionLabel = "All creatives";
+      exportSelectedCount = creatives.length;
+    }
+
+    if (exportHierarchy !== hierarchy) setHierarchy(exportHierarchy);
+    if (rowHeightOverride !== null) setRowHeight(rowHeightOverride);
+
+    const exportHierarchyLabel = exportHierarchy.map(d => DIM_META[d].label).join(" | ");
+    const filterBits: string[] = [];
+    filterBits.push(filters.status !== "All" ? `Status ${filters.status}` : "Status All");
+    filterBits.push(filters.city !== "All" ? `City ${filters.city}` : "City All");
+    filterBits.push(filters.funnel !== "All" ? `Funnel ${filters.funnel}` : "Funnel All");
+    if (filters.search) filterBits.push(`Search ${filters.search}`);
+
+    const columnsShort = columnLabels.length > 6
+      ? `${columnLabels.slice(0, 6).join(", ")} +${columnLabels.length - 6} more`
+      : columnLabels.join(", ");
+
+    const metaLines = [
+      `Mode: ${modeLabel} | Selection: ${exportSelectionLabel} | Creatives: ${exportSelectedCount}/${creatives.length}`,
+      `Filters: ${filterBits.join(" | ")} | Hierarchy: ${exportHierarchyLabel}`,
+      `Sort: ${sortLabel} | Columns: ${columnsShort || "None"}`,
+    ];
+
+    try {
+      await new Promise(r => requestAnimationFrame(() => setTimeout(r, 60)));
+      await exportPdf({
+        theme,
+        dateRange: dateRangeLabel,
+        filename:  `CreativeVisibility_${modeLabel}_${filters.startDate}_${filters.endDate}`,
+        selector:  ".print-area",
+        metaLines,
+      });
+      toast.success("PDF exported", { description: `Saved as ${modeLabel} PDF (${theme} theme).` });
+    } catch (err) {
+      toast.error("PDF export failed", { description: err instanceof Error ? err.message : "Unknown error" });
+    } finally {
+      setHierarchy(prev.hierarchy);
+      setRowHeight(prev.rowHeight);
+      setActiveKey(prev.activeKey);
+      setSelected(prev.selected);
+      setPdfLoading(false);
+    }
   };
 
   const handleActiveChange = (key: string, ids: string[]) => {
@@ -366,6 +597,9 @@ function Portal() {
       <div className="aurora-bg no-print"  aria-hidden />
       <div className="aurora-grid no-print" aria-hidden />
 
+      {/* ── Fullscreen Splash Loader ── */}
+      <SplashLoader visible={splashVisible} secs={loadingSecs} />
+
       {/* ── Header ── */}
       <header className="app-header glass-strong border-b border-white/5 sticky top-0 z-30 no-print">
         <div className="flex items-center gap-4 px-6 py-3">
@@ -379,7 +613,7 @@ function Portal() {
           </Button>
 
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-gold-gradient flex items-center justify-center shadow-gold">
+            <div className="w-9 h-9 rounded-lg bg-gold-gradient flex items-center justify-center">
               <Gem className="w-5 h-5 text-primary-foreground" />
             </div>
             <div>
@@ -442,30 +676,14 @@ function Portal() {
               setActive={handleActiveChange}
               mode={mode}
               setMode={setMode}
+              rowHeight={rowHeight}
+              setRowHeight={setRowHeight}
             />
           </div>
         </aside>
 
         {/* ── Main ── */}
         <main className="flex-1 min-w-0 p-6 space-y-5">
-
-          {/* Mode banner */}
-          <div className="flex items-center gap-3 glass rounded-xl px-4 py-2.5 no-print">
-            <div className="w-8 h-8 rounded-lg bg-gold-gradient flex items-center justify-center shadow-gold shrink-0">
-              {mode === "report" ? <LayoutGrid className="w-4 h-4 text-primary-foreground" /> : <Network className="w-4 h-4 text-primary-foreground" />}
-            </div>
-            <div className="min-w-0">
-              <div className="font-display font-bold text-sm tracking-tight leading-tight">
-                {mode === "report" ? "Creative Report" : "Creative Structure"}
-              </div>
-              <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
-                {mode === "report" ? "Performance · spend · conversions" : "Visibility · where & how each creative is used"}
-              </div>
-            </div>
-            <div className="ml-auto flex items-center gap-2">
-              <RowHeightControl value={rowHeight} onChange={setRowHeight} />
-            </div>
-          </div>
 
           {/* ── Error banner ── */}
           {error && !loading && (
@@ -475,7 +693,7 @@ function Portal() {
               <Button
                 size="sm" variant="outline"
                 className="border-red-500/30 text-red-300 hover:bg-red-500/10"
-                onClick={() => loadData(filters.startDate, filters.endDate)}
+                onClick={() => loadRawData()}
               >
                 Retry
               </Button>
@@ -490,9 +708,12 @@ function Portal() {
               minDate={availableRange?.min}
               maxDate={availableRange?.max}
               cities={cities}
+              campaignTypes={filterOptions.campaign_types}
+              campaignNames={filterOptions.campaign_names}
               columns={columns}
               setColumns={setColumns}
               onExportPDF={() => setExportOpen(true)}
+              pdfLoading={pdfLoading}
               onExportCSV={handleExportCSV}
               rightSlot={
                 <SavedViewsMenu
@@ -507,65 +728,126 @@ function Portal() {
                 />
               }
             />
+            {/* ── Compare-period warning ── */}
+            {compareWarning && (
+              <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  {compareWarning.kind === "no_data" ? (
+                    <>
+                      <p className="text-sm font-medium text-amber-300">No comparison data available</p>
+                      <p className="text-xs text-amber-300/80">
+                        No data was found for the comparison period ({fmtD(compareWarning.cStart)} – {fmtD(compareWarning.cEnd)}).
+                        Comparison deltas will not be shown. Try selecting a more recent date range.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm font-medium text-amber-300">Comparison data is incomplete</p>
+                      <p className="text-xs text-amber-300/80">
+                        The comparison period ({fmtD(compareWarning.cStart)} – {fmtD(compareWarning.cEnd)}) starts before
+                        the oldest available data ({fmtD(compareWarning.dataMin!)}). Figures may be understated — comparison results will not be accurate.
+                      </p>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
             {mode === "report" && (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
-                <KPI icon={Eye}               label="Impressions"  value={fmtNum(totals.impressions)} />
-                <KPI icon={MousePointerClick} label="Clicks"       value={fmtNum(totals.clicks)} />
-                <KPI icon={IndianRupee}       label="Spend"        value={fmtINR0(totals.cost)} accent />
-                <KPI icon={Target}            label="Conversions"  value={totals.conversions.toFixed(0)} />
-                <KPI icon={Sparkles}          label="CTR"          value={fmtPct(totals.ctr)} />
-                <KPI icon={Database}          label="CPA"          value={fmtINR(totals.cpa)} />
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
+                <KPI icon={Eye}               label="Impressions"  value={fmtNum(totals.impressions)}  delta={pctDelta(totals.impressions, compareTotals?.impressions)} />
+                <KPI icon={MousePointerClick} label="Clicks"       value={fmtNum(totals.clicks)}       delta={pctDelta(totals.clicks,      compareTotals?.clicks)} />
+                <KPI icon={Sparkles}          label="CTR"          value={fmtPct(totals.ctr)}          delta={pctDelta(totals.ctr,         compareTotals?.ctr)} />
+                <KPI icon={IndianRupee}       label="Spend"        value={fmtINR0(totals.cost)} accent delta={pctDelta(totals.cost,        compareTotals?.cost)} />
+                <KPI icon={Coins}             label="CPC"          value={fmtINR(totals.cpc)}          delta={pctDelta(totals.cpc,         compareTotals?.cpc)} />
               </div>
             )}
           </div>
 
-          {/* ── Loading skeleton ── */}
+          {/* ── Loading skeleton with progress bar ── */}
           {loading && (
-            <div className="space-y-3 animate-pulse">
-              {[...Array(3)].map((_, i) => (
-                <div key={i} className="glass rounded-xl h-28 opacity-50" />
-              ))}
+            <div className="space-y-4">
+              <LoadingProgress secs={loadingSecs} />
+              <div className="space-y-3 animate-pulse">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="glass rounded-xl h-28 opacity-50" />
+                ))}
+              </div>
             </div>
           )}
 
           {/* ── Content ── */}
           {!loading && mode === "report" && (
-            <Tabs defaultValue="directory" className="w-full">
-              <TabsList className="bg-accent/40 no-print">
-                <TabsTrigger value="directory" className="gap-2 data-[state=active]:bg-gold-gradient data-[state=active]:text-primary-foreground">
-                  <LayoutGrid className="w-4 h-4" /> Creative Directory
-                </TabsTrigger>
-                <TabsTrigger value="top" className="gap-2 data-[state=active]:bg-gold-gradient data-[state=active]:text-primary-foreground">
-                  <Trophy className="w-4 h-4" /> Top Performers
-                </TabsTrigger>
-              </TabsList>
+            <div className="w-full space-y-5">
+              {/* ── Tab switcher ── */}
+              <div className="no-print flex items-center gap-1 p-1 rounded-xl w-fit bg-white/[0.03] border border-white/[0.06]">
+                {([
+                  { id: "directory", icon: LayoutGrid, label: "Creative Directory" },
+                  { id: "top",       icon: Trophy,     label: "Top Performers"    },
+                ] as const).map(({ id, icon: Icon, label }) => {
+                  const active = activeTab === id;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setActiveTab(id)}
+                      className={cn(
+                        "flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer",
+                        active
+                          ? "bg-gold-gradient text-[#2a1800] font-semibold shadow-[0_2px_20px_rgba(212,175,55,0.35)]"
+                          : "text-muted-foreground hover:text-foreground hover:bg-white/[0.05]",
+                      )}
+                    >
+                      <Icon className="w-4 h-4 shrink-0" />
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
 
-              <TabsContent value="directory" className="mt-5 print-area">
-                {visibleRows.length === 0 ? <EmptyState /> : (
-                  <DirectoryTree
-                    rows={visibleRows} visibleCols={columns}
-                    hierarchy={hierarchy} creativeRowHeight={rowHeight}
-                    onCreativeClick={openDetail}
-                  />
-                )}
-              </TabsContent>
-
-              <TabsContent value="top" className="mt-5">
-                <div className="flex items-center gap-2 mb-4 no-print">
-                  <span className="text-sm text-muted-foreground">Rank by:</span>
-                  {(["ctr", "conversions", "cpc", "cpa"] as const).map(m => (
-                    <button key={m} onClick={() => setRankMetric(m)}
-                      className={`text-xs px-3 py-1.5 rounded-full border transition uppercase tracking-wider font-medium ${
-                        rankMetric === m
-                          ? "bg-gold-gradient text-primary-foreground border-transparent"
-                          : "border-border hover:border-gold/50"
-                      }`}
-                    >{m}</button>
-                  ))}
+              {/* ── Directory tab ── */}
+              {activeTab === "directory" && (
+                <div className="print-area">
+                  {visibleRows.length === 0 ? (
+                    noDataForRange
+                      ? <NoDateRangeData start={filters.startDate} end={filters.endDate} available={availableRange} />
+                      : <EmptyState />
+                  ) : (
+                    <DirectoryTree
+                      rows={visibleRows} visibleCols={columns}
+                      hierarchy={hierarchy} creativeRowHeight={rowHeight}
+                      sortBy={sortBy}
+                      onSortByChange={setSortBy}
+                      onCreativeClick={openDetail}
+                      compareMode={filters.compareMode}
+                      compareMetrics={compareMetricsMap ?? undefined}
+                      compareTotals={compareTotals ?? undefined}
+                    />
+                  )}
                 </div>
-                <TopPerformers rows={visibleRows} metric={rankMetric} />
-              </TabsContent>
-            </Tabs>
+              )}
+
+              {/* ── Top Performers tab ── */}
+              {activeTab === "top" && (
+                <div>
+                  <div className="flex items-center gap-2 mb-4 no-print">
+                    <span className="text-sm text-muted-foreground">Rank by:</span>
+                    {(["ctr", "conversions", "cpc", "cpa"] as const).map(m => (
+                      <button key={m} onClick={() => setRankMetric(m)}
+                        className={cn(
+                          "text-xs px-3 py-1.5 rounded-full border transition uppercase tracking-wider font-medium",
+                          rankMetric === m
+                            ? "bg-gold-gradient text-[#2a1800] border-transparent"
+                            : "border-border hover:border-gold/50",
+                        )}
+                      >{m}</button>
+                    ))}
+                  </div>
+                  <TopPerformers rows={visibleRows} metric={rankMetric} />
+                </div>
+              )}
+            </div>
           )}
 
           {!loading && mode === "structure" && (
@@ -609,6 +891,8 @@ function Portal() {
                   hierarchy={hierarchy}
                   structureOnly
                   creativeRowHeight={rowHeight}
+                  sortBy={sortBy}
+                  onSortByChange={setSortBy}
                   onCreativeClick={openDetail}
                 />
               )}
@@ -617,12 +901,19 @@ function Portal() {
         </main>
       </div>
 
-      <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} onPick={handleExportPDF} />
+      <ExportModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        onPick={handleExportPDF}
+        context={exportContext}
+        hierarchyOptions={hierarchyOptions}
+        canScopeAll={selected.size !== creatives.length}
+      />
 
       <CreativeDetailModal
         creative={detailCreative}
         onClose={closeDetail}
-        daily={dailyPerformanceShim}
+        daily={rawDailyRows}
         startDate={filters.startDate}
         endDate={filters.endDate}
         comparisonIds={visibleRows.map(r => r.creative.creative_id)}
@@ -644,26 +935,72 @@ function Portal() {
 // Sub-components (unchanged from original)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function KPI({ icon: Icon, label, value, accent }: {
+function KPI({ icon: Icon, label, value, accent, delta }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string; value: string; accent?: boolean;
+  delta?: number | null;
 }) {
+  const hasDelta = delta !== null && delta !== undefined;
   return (
     <div className={`glass rounded-xl p-4 flex items-center gap-3 ${accent ? "border-gold/30" : ""}`}>
-      <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${accent ? "bg-gold-gradient text-primary-foreground" : "bg-accent text-gold"}`}>
+      <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${accent ? "bg-gold-gradient text-primary-foreground" : "bg-accent text-gold"}`}>
         <Icon className="w-4 h-4" />
       </div>
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <div className="text-[10px] uppercase tracking-widest text-muted-foreground">{label}</div>
         <button
           type="button"
           onClick={() => { void copyText(value); }}
-          className="font-display font-bold text-lg leading-tight tabular-nums truncate cursor-copy text-left"
+          className="font-display font-bold text-lg leading-tight tabular-nums truncate cursor-copy text-left w-full"
           title="Click to copy"
         >
           {value}
         </button>
+        {hasDelta && (
+          <div className={cn(
+            "text-[10px] text-right tabular-nums",
+            delta! > 0 ? "text-emerald-400" : delta! < 0 ? "text-red-400" : "text-muted-foreground",
+          )}>
+            ({delta! > 0 ? "+" : ""}{delta!.toFixed(1)}%)
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+// Short date formatter for warning messages  e.g. "May 01, 2025"
+function fmtD(iso: string) {
+  if (!iso) return iso;
+  const [y, m, d] = iso.split("-");
+  const mn = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${mn[+m - 1]} ${d}, ${y}`;
+}
+
+function NoDateRangeData({
+  start, end, available,
+}: { start: string; end: string; available: { min: string; max: string } | null }) {
+  return (
+    <div className="glass rounded-2xl py-20 px-6 text-center">
+      <div className="w-14 h-14 mx-auto mb-5 rounded-full bg-amber-500/10 flex items-center justify-center">
+        <AlertTriangle className="w-7 h-7 text-amber-400" />
+      </div>
+      <h3 className="font-display font-semibold text-xl">No data for this date range</h3>
+      <p className="text-sm text-muted-foreground mt-2 max-w-sm mx-auto">
+        No creative performance data was found for{" "}
+        <span className="font-semibold text-foreground">{fmtD(start)}</span>
+        {" – "}
+        <span className="font-semibold text-foreground">{fmtD(end)}</span>.
+      </p>
+      {available && (
+        <p className="text-sm text-muted-foreground mt-3 max-w-sm mx-auto">
+          Data is available from{" "}
+          <span className="font-semibold text-gold">{fmtD(available.min)}</span>
+          {" to "}
+          <span className="font-semibold text-gold">{fmtD(available.max)}</span>.
+          {" "}Please select a date range within this window.
+        </p>
+      )}
     </div>
   );
 }
@@ -682,30 +1019,211 @@ function EmptyState() {
   );
 }
 
-function RowHeightControl({ value, onChange }: { value: number; onChange: (v: number) => void }) {
-  const presets = [64, 96, 160, 240, 400];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Loading progress indicator
+// ─────────────────────────────────────────────────────────────────────────────
+function LoadingProgress({ secs }: { secs: number }) {
+  // Simulate progress: fast at first, slows toward 90% while waiting for network
+  const pct = Math.min(90, secs < 5 ? secs * 12 : 60 + (secs - 5) * 1.5);
+  const msg = secs === 0
+    ? "Connecting to Google Ads data…"
+    : secs < 5
+    ? "Fetching creative performance data…"
+    : secs < 15
+    ? "Reading from Google Sheets… hang tight"
+    : secs < 35
+    ? "Aggregating campaign data — this takes ~30s on first load"
+    : "Almost there… large dataset detected";
+
   return (
-    <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-white/10 bg-white/[0.03]">
-      <Maximize2 className="w-3.5 h-3.5 text-gold" />
-      <span className="text-[10px] uppercase tracking-widest text-muted-foreground hidden sm:inline">Row</span>
-      <input
-        type="range" min={40} max={1500} step={8} value={value}
-        onChange={e => onChange(Number(e.target.value))}
-        className="w-28 accent-[var(--gold)] cursor-pointer"
-        aria-label="Creative row height"
-      />
-      <span className="text-[11px] tabular-nums text-foreground w-12 text-right">{value}px</span>
-      <div className="hidden md:flex items-center gap-1 ml-1 border-l border-white/10 pl-2">
-        {presets.map(p => (
-          <button key={p} onClick={() => onChange(p)}
-            className={cn(
-              "text-[10px] px-1.5 py-0.5 rounded border transition",
-              value === p
-                ? "border-gold/40 bg-gold/15 text-gold"
-                : "border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/[0.06]",
-            )}
-          >{p}</button>
-        ))}
+    <div className="glass rounded-xl px-5 py-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="w-4 h-4 animate-spin text-gold shrink-0" />
+          <span>{msg}</span>
+        </div>
+        <span className="text-xs tabular-nums text-muted-foreground">{secs}s</span>
+      </div>
+      <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+        <div
+          className="h-full rounded-full bg-gold-gradient transition-all duration-1000 ease-out"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      {secs >= 5 && (
+        <p className="text-[11px] text-muted-foreground">
+          💡 Subsequent loads will be instant — data is cached for 30 minutes.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fullscreen Splash Loader
+// Always visible for a minimum of 5 seconds.
+// ─────────────────────────────────────────────────────────────────────────────
+const AUTHOR_NAME = "Sourabh Chaudhari";
+
+function SplashLoader({ visible, secs }: { visible: boolean; secs: number }) {
+  // Progress bar: reaches ~95% at 5s, creeps slowly after that
+  const pct = Math.min(97, secs < 5 ? secs * 19 : 95 + (secs - 5) * 0.5);
+
+  const msg = secs === 0
+    ? "Initialising CreativeVisibility…"
+    : secs < 2
+    ? "Connecting to Google Ads data…"
+    : secs < 4
+    ? "Fetching campaign performance…"
+    : secs < 5
+    ? "Aggregating creative insights…"
+    : secs < 14
+    ? "Reading from Google Sheets…"
+    : "Loading large dataset — almost there";
+
+  // ── Typewriter for author name ───────────────────────────────────────────
+  const [typed, setTyped] = useState("");
+  const [cursorOn, setCursorOn] = useState(true);
+  const isDone = typed.length >= AUTHOR_NAME.length;
+
+  // Start typing 1.3s after splash appears; type one char every 75ms
+  useEffect(() => {
+    if (!visible) { setTyped(""); return; }
+    const startDelay = setTimeout(() => {
+      let i = 0;
+      const tick = setInterval(() => {
+        i += 1;
+        setTyped(AUTHOR_NAME.slice(0, i));
+        if (i >= AUTHOR_NAME.length) clearInterval(tick);
+      }, 75);
+      return () => clearInterval(tick);
+    }, 1300);
+    return () => clearTimeout(startDelay);
+  }, [visible]);
+
+  // Blink cursor — faster while typing, slower once done
+  useEffect(() => {
+    const interval = isDone ? 530 : 400;
+    const id = setInterval(() => setCursorOn(v => !v), interval);
+    return () => clearInterval(id);
+  }, [isDone]);
+
+  return (
+    <div
+      className={`splash-overlay no-print${visible ? "" : " fade-out"}`}
+      aria-live="polite"
+      aria-label="Loading CreativeVisibility"
+      role="status"
+    >
+      {/* Background grid */}
+      <div className="splash-grid" aria-hidden />
+
+      {/* Content column */}
+      <div className="relative z-10 flex flex-col items-center gap-8 px-6 w-full max-w-sm">
+
+        {/* Logo with orbiting rings */}
+        <div className="relative flex items-center justify-center w-28 h-28">
+          {/* Outer orbit ring */}
+          <div className="splash-orbit-1 absolute inset-0">
+            <svg viewBox="0 0 112 112" className="w-full h-full" aria-hidden>
+              <circle
+                cx="56" cy="56" r="52"
+                fill="none"
+                stroke="oklch(0.78 0.15 85 / 0.18)"
+                strokeWidth="1"
+                strokeDasharray="6 10"
+              />
+              <circle cx="56" cy="4" r="3" fill="oklch(0.78 0.15 85 / 0.8)" />
+            </svg>
+          </div>
+          {/* Inner orbit ring */}
+          <div className="splash-orbit-2 absolute inset-4">
+            <svg viewBox="0 0 80 80" className="w-full h-full" aria-hidden>
+              <circle
+                cx="40" cy="40" r="36"
+                fill="none"
+                stroke="oklch(0.78 0.15 85 / 0.12)"
+                strokeWidth="1"
+                strokeDasharray="3 8"
+              />
+              <circle cx="40" cy="4" r="2" fill="oklch(0.78 0.15 85 / 0.5)" />
+            </svg>
+          </div>
+          {/* Gold pulsing core */}
+          <div className="splash-logo-ring relative flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-[oklch(0.78_0.15_85/0.15)] to-[oklch(0.78_0.15_85/0.05)] border border-[oklch(0.78_0.15_85/0.35)]">
+            <Gem className="w-7 h-7 text-gold" />
+          </div>
+        </div>
+
+        {/* Brand name */}
+        <div className="text-center space-y-1.5">
+          <h1 className="splash-title font-display font-bold text-2xl tracking-tight text-white">
+            Creative<span className="text-gold">Visibility</span>
+          </h1>
+          <p className="splash-sub text-xs text-muted-foreground tracking-widest uppercase">
+            Google Ads Creative Intelligence
+          </p>
+        </div>
+
+        {/* Progress bar + status */}
+        <div className="splash-bar-track w-full space-y-3">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-gold" />
+              {msg}
+            </span>
+            <span className="tabular-nums">{secs}s</span>
+          </div>
+          {/* Bar track */}
+          <div className="relative h-[3px] rounded-full bg-white/5 overflow-hidden">
+            <div className="splash-shimmer absolute inset-0" aria-hidden />
+            <div
+              className="h-full rounded-full bg-gold-gradient transition-all duration-1000 ease-out"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          {secs >= 6 && (
+            <p className="text-[10px] text-muted-foreground text-center">
+              ⚡ Subsequent loads are instant — data cached locally
+            </p>
+          )}
+        </div>
+
+        {/* Separator */}
+        <div className="w-full border-t border-white/[0.07]" />
+
+        {/* Developer branding */}
+        <div className="splash-credits text-center space-y-2 -mt-4">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
+            Designed &amp; Built by
+          </p>
+
+          {/* Typewriter name */}
+          <p className="font-display font-bold text-xl tracking-wide leading-none">
+            <span className="text-gold">{typed}</span>
+            <span
+              className="inline-block w-[2px] h-[1.1em] bg-gold align-middle ml-[2px]"
+              style={{ opacity: cursorOn ? 1 : 0, transition: "opacity 0.08s" }}
+              aria-hidden
+            />
+          </p>
+
+          {/* Tagline — fades in once name is fully typed */}
+          <p
+            className="text-[11px] tracking-widest uppercase font-medium leading-relaxed"
+            style={{
+              color: "oklch(0.78 0.15 85 / 0.55)",
+              opacity: isDone ? 1 : 0,
+              transform: isDone ? "translateY(0)" : "translateY(4px)",
+              transition: "opacity 0.6s ease, transform 0.6s ease",
+            }}
+          >
+            Decoding Data, Driving Decisions.
+            <br />
+            Implementing AI, Empowering Innovation.
+          </p>
+        </div>
       </div>
     </div>
   );

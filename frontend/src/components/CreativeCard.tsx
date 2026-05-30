@@ -31,7 +31,7 @@ export function CreativeCard({ creative, metrics, selected, onToggle, visibleCol
   return (
     <div className={cn(
       "creative-card glass rounded-2xl overflow-hidden flex flex-col transition-all duration-300 group",
-      "hover:shadow-gold hover:-translate-y-0.5 hover:border-gold/40",
+      "hover:-translate-y-0.5 hover:border-gold/40",
       selected && "ring-1 ring-gold border-gold/50",
     )}>
       {/* Media */}

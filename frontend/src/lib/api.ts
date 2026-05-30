@@ -6,7 +6,15 @@
  *
  * Base URL is controlled by VITE_API_URL in .env.local.
  * Falls back to http://localhost:8000 for local dev.
+ *
+ * ETag / IndexedDB:
+ *   fetchRawPerformance() implements stale-while-revalidate using IndexedDB
+ *   and HTTP ETag / If-None-Match. On return visits where data hasn't changed,
+ *   the backend returns 304 Not Modified (no body). The function returns the
+ *   IndexedDB entry instantly — zero network transfer overhead.
  */
+
+import { idbGet, idbSet, idbClear, type CvCacheEntry } from "@/lib/idb";
 
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:8000";
 
@@ -48,12 +56,13 @@ export interface Creative {
  * Never hardcoded. Expands automatically as new cities, types, etc. are added.
  */
 export interface FilterOptions {
-  cities:         string[];
-  campaign_types: string[];
-  categories:     string[];
-  age_groups:     string[];
-  funnels:        string[];
-  statuses:       string[];
+  cities:          string[];
+  campaign_types:  string[];
+  campaign_names:  string[];
+  categories:      string[];
+  age_groups:      string[];
+  funnels:         string[];
+  statuses:        string[];
 }
 
 /**
@@ -168,4 +177,106 @@ export interface CurrentStructureResponse {
  */
 export async function fetchCurrentStructure(): Promise<CurrentStructureResponse> {
   return apiFetch<CurrentStructureResponse>("/api/current-structure");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Raw Performance (client-side aggregation model)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One row of daily performance for one creative on one day.
+ * Returned by /api/raw-performance; aggregated client-side in aggregator.ts.
+ */
+export interface RawDailyRow {
+  creative_id: string;
+  date:        string;   // "YYYY-MM-DD"
+  impressions: number;
+  clicks:      number;
+  cost:        number;
+  conversions: number;
+}
+
+/** Dimension fields keyed by creative_id (no performance, no duplication). */
+export interface CreativeDimensionMap {
+  [creative_id: string]: {
+    creative_url:  string;
+    creative_type: "Image" | "Video" | "Text";
+    campaign_name: string;
+    campaign_type: string;
+    city:          string;
+    funnel:        string;
+    ad_group:      string;
+    status:        "Enabled" | "Paused";
+  };
+}
+
+export interface RawPerformanceResponse {
+  status:              "ok";
+  served_from_cache:   boolean;
+  data_fetched_at:     string;
+  available_date_range: { min: string; max: string };
+  dimensions_count:    number;
+  daily_rows_count:    number;
+  dimensions:          CreativeDimensionMap;
+  daily_rows:          RawDailyRow[];
+  filter_options:      FilterOptions;
+}
+
+/**
+ * Fetch ALL daily rows for ALL dates.
+ * The frontend aggregates by date range client-side — no re-fetch needed
+ * when the user changes the date picker.
+ *
+ * ETag + IndexedDB flow:
+ *   1. Read IndexedDB for a cached entry (non-blocking, <5ms).
+ *   2. If found: send If-None-Match header with stored ETag.
+ *      → Backend returns 304 (data unchanged) → return IDB entry instantly.
+ *      → Backend returns 200 (data changed)  → update IDB, return new data.
+ *   3. If not found: normal fetch, store result in IDB.
+ */
+export async function fetchRawPerformance(): Promise<RawPerformanceResponse> {
+  const IDB_KEY  = "raw_daily";
+  const cached   = await idbGet(IDB_KEY);
+  const headers: Record<string, string> = { Accept: "application/json" };
+
+  if (cached?.etag) {
+    headers["If-None-Match"] = `"${cached.etag}"`;
+  }
+
+  const url = `${BASE}/api/raw-performance`;
+  const res = await fetch(url, { headers });
+
+  // ── 304 Not Modified — data unchanged, use IndexedDB ───────────────────────
+  if (res.status === 304 && cached) {
+    return {
+      ...cached.payload as RawPerformanceResponse,
+      served_from_cache: true,
+    };
+  }
+
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail?.detail ?? `API error ${res.status}`);
+  }
+
+  // ── 200 OK — fresh data from backend ─────────────────────────────────
+  const data = await res.json() as RawPerformanceResponse;
+
+  // Extract ETag from response header (strip surrounding quotes if present)
+  const rawEtag = res.headers.get("etag") ?? "";
+  const etag    = rawEtag.replace(/^"|"$/g, "");
+
+  // Persist to IndexedDB — atomic transaction, replaces any previous entry
+  if (etag) {
+    const entry: CvCacheEntry = {
+      key:       IDB_KEY,
+      payload:   data,
+      etag,
+      row_count: data.daily_rows_count ?? 0,
+      stored_at: Date.now(),
+    };
+    await idbSet(entry);
+  }
+
+  return data;
 }

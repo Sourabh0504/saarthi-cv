@@ -40,4 +40,4 @@ npm install
 # 3. Start the Vite development server
 npm run dev
 ```
-*Your frontend portal is now running at `http://localhost:5173`. Open this link in your browser to view it!*
+*Your frontend portal is now running at `http://localhost:8080`. Open this link in your browser to view it!*

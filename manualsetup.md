@@ -68,7 +68,6 @@ In your Google Sheet: **Extensions → Apps Script**
 
 A new browser tab opens with the script editor.
 
----
 
 ### 2.2 — Paste the script
 
@@ -82,7 +81,26 @@ A new browser tab opens with the script editor.
 5. Click **💾 Save** (or Ctrl+S)
 6. When prompted for a project name, enter: `CreativeVisibility API`
 
----
+
+### 2.2.1 — Set up automatic batch cleanup of zero-impression rows (self-chaining)
+
+To keep your Daily_dump sheet clean, set up a scheduled trigger to delete rows where Impr = 0, in safe batches:
+
+1. In the Apps Script editor, click the clock icon (Triggers) in the left sidebar.
+2. Click **Add Trigger** (bottom right).
+3. For "Choose which function to run", select `deleteZeroImprRows`.
+4. For "Select event source", choose **Time-driven**.
+5. For "Select type of time based trigger", choose **Hour timer**.
+6. For "Select hour interval", choose **Every 8 hours**.
+7. Click **Save**.
+
+How it works:
+- Each run deletes up to 1000 rows with Impr = 0 (batch mode).
+- If more zero-impression rows remain, the script automatically schedules itself to run again in 1 minute, until all are deleted.
+- This ensures the script never exceeds Google Apps Script’s time limit, even for very large sheets.
+- New zero-impression rows are picked up in the next scheduled run.
+
+> ⚠️ Only rows in Daily_dump with Impr = 0 are deleted. All other data is untouched. The process is safe for automated, real-time data dumps and large sheets.
 
 ### 2.3 — Run the setup helper
 

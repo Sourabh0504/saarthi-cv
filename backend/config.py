@@ -50,9 +50,22 @@ CACHE_TTL: int = int(os.getenv("CACHE_TTL", "900"))
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
 # Comma-separated list of allowed frontend origins.
-_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000")
+_raw_origins = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:5173,http://localhost:3000,http://localhost:8080",
+)
 ALLOWED_ORIGINS: list[str] = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
 # ── Server ────────────────────────────────────────────────────────────────────
 API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
 API_PORT: int = int(os.getenv("API_PORT", "8000"))
+
+# ── SQLite Persistent Cache ───────────────────────────────────────────────────
+# Path to the SQLite file used as a durable cache tier.
+# This file persists across server restarts — enables instant warm starts.
+# Relative paths are resolved relative to the backend/ directory.
+# Add cv_cache.db to .gitignore — it is a local runtime artifact, not source.
+import pathlib as _pathlib
+DB_PATH: _pathlib.Path = _pathlib.Path(
+    os.getenv("DB_PATH", str(_pathlib.Path(__file__).parent / "cv_cache.db"))
+)

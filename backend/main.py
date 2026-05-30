@@ -21,32 +21,87 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 import asyncio
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Header, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 import cache as cache_module
-from apps_script_connector import fetch_data, fetch_current_structure
+import db as db_module
+from apps_script_connector import (
+    fetch_data, fetch_raw_data, fetch_current_structure, close_http_client
+)
 from calculator import top_performers
-from config import ALLOWED_ORIGINS
+from config import ALLOWED_ORIGINS, get_apps_script_url
 
 
-# ── Lifespan: pre-warm cache on startup ──────────────────────────────────────
+# ── Lifespan: init DB, pre-warm cache, periodic refresh, clean shutdown ──────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Runs once when the server starts.
-    Pre-fetches last 30 days so the first user gets instant data.
-    Failure is non-fatal — the server still starts.
+    Startup:
+      1. Initialize SQLite schema (idempotent — safe on every restart).
+      2. Pre-fetch raw daily data in the background (warm the two-tier cache).
+         If SQLite already has valid data, this returns instantly from disk.
+         If SQLite is cold (first ever run), this calls Apps Script (~30–90s)
+         in the background — the server is already accepting requests.
+      3. Launch a background loop that re-warms the cache every 18 minutes.
+      4. Launch a background loop that purges expired SQLite rows every 30 minutes.
+
+    Shutdown:
+      5. Close the shared httpx.AsyncClient gracefully.
     """
+    # ── Startup ────────────────────────────────────────────────────────────────
+    # 1. Init SQLite (creates cv_cache.db + table if they don't exist)
+    db_module.init_db()
+    print("[startup] SQLite persistent cache initialized")
+
     async def _warm_cache() -> None:
+        """Warm both data endpoints in parallel. Non-fatal."""
         try:
-            await fetch_data()
-            print("[startup] Cache pre-warmed: auto range (sheet min/max)")
+            await asyncio.gather(
+                fetch_data(),
+                fetch_raw_data(),
+                return_exceptions=True,
+            )
+            print("[startup] Cache pre-warmed: auto range + raw daily (parallel)")
         except Exception as exc:
             print(f"[startup] Pre-warm failed (non-fatal): {exc}")
 
+    async def _periodic_warm() -> None:
+        """Re-warm the auto range + raw daily every 18 min (before AS 20-min TTL)."""
+        INTERVAL = 18 * 60
+        while True:
+            await asyncio.sleep(INTERVAL)
+            try:
+                cache_module.invalidate_key("auto_all")
+                cache_module.invalidate_key("raw_daily")
+                await fetch_data()
+                await fetch_raw_data()
+                print("[periodic] Cache re-warmed: auto range + raw daily")
+            except Exception as exc:
+                print(f"[periodic] Re-warm failed (non-fatal): {exc}")
+
+    async def _periodic_purge() -> None:
+        """Delete expired SQLite rows every 30 minutes to keep the DB small."""
+        INTERVAL = 30 * 60
+        while True:
+            await asyncio.sleep(INTERVAL)
+            try:
+                removed = db_module.db_purge_expired()
+                if removed > 0:
+                    print(f"[purge] Removed {removed} expired SQLite cache entries")
+            except Exception as exc:
+                print(f"[purge] SQLite purge failed (non-fatal): {exc}")
+
     asyncio.create_task(_warm_cache())
-    yield  # Server runs here
+    asyncio.create_task(_periodic_warm())
+    asyncio.create_task(_periodic_purge())
+
+    yield  # ← Server is running here
+
+    # ── Shutdown ───────────────────────────────────────────────────────────────
+    await close_http_client()
+    print("[shutdown] httpx client closed cleanly")
 
 
 # ── App instance ──────────────────────────────────────────────────────────────
@@ -65,6 +120,8 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+# Compress JSON responses — saves 60-80% transfer size on large raw daily payloads
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -199,6 +256,62 @@ async def get_top_performers(
     }
 
 
+@app.get("/api/raw-performance", tags=["Data"])
+async def get_raw_performance(
+    response: Response,
+    if_none_match: str | None = Header(None, alias="if-none-match"),
+):
+    """
+    Return ALL daily rows for ALL dates in the sheet.
+
+    Unlike /api/performance (which aggregates server-side for a given date range),
+    this endpoint returns raw per-creative-per-day data so the frontend can
+    aggregate any date range client-side — making date picker changes instant.
+
+    ETag / 304 support:
+      - Returns an ETag header (SHA-256 checksum of the cached payload).
+      - If the client sends If-None-Match matching the current ETag,
+        returns 304 Not Modified with no body — zero transfer overhead.
+      - The frontend stores the ETag in IndexedDB and sends it on every revisit.
+
+    Response shape:
+      dimensions  : { creative_id: { creative_url, creative_type, ... } }
+      daily_rows  : [ { creative_id, date, impressions, clicks, cost, conversions } ]
+      filter_options, available_date_range, dimensions_count, daily_rows_count
+    """
+    # ── ETag check: return 304 if client already has current data ─────────────
+    # The ETag is the SHA-256 checksum stored in SQLite when the data was cached.
+    # Reading it is a single lightweight SELECT — no re-computation.
+    current_etag = cache_module.get_etag("raw_daily")
+    if current_etag and if_none_match and if_none_match.strip('"') == current_etag:
+        return Response(status_code=304)
+
+    try:
+        data = await fetch_raw_data()
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Apps Script fetch failed: {exc}")
+
+    # Attach ETag to response so client can cache it
+    new_etag = cache_module.get_etag("raw_daily")
+    if new_etag:
+        response.headers["ETag"]          = f'"{new_etag}"'
+        response.headers["Cache-Control"] = "private, no-cache"
+
+    return {
+        "status":               "ok",
+        "served_from_cache":    data["served_from_cache"],
+        "data_fetched_at":      data["data_fetched_at"],
+        "available_date_range": data["available_date_range"],
+        "dimensions_count":     data["dimensions_count"],
+        "daily_rows_count":     data["daily_rows_count"],
+        "dimensions":           data["dimensions"],
+        "daily_rows":           data["daily_rows"],
+        "filter_options":       data["filter_options"],
+    }
+
+
 @app.get("/api/current-structure", tags=["Data"])
 async def get_current_structure():
     """
@@ -225,11 +338,25 @@ async def get_current_structure():
 @app.post("/api/sync", tags=["System"])
 async def sync():
     """
-    Force-clear the entire cache and immediately pre-fetch last 30 days.
+    Force-clear the entire cache (Python TTLCache + Apps Script ScriptProperties)
+    and immediately pre-fetch the default date range.
     Use this after manually updating the Google Sheet or after a new creative is added.
     """
+    # 1. Clear Python in-memory cache
     cache_module.invalidate_all()
 
+    # 2. Clear Apps Script ScriptProperties persistent cache
+    try:
+        async with __import__("httpx").AsyncClient(timeout=15.0) as client:
+            await client.get(
+                get_apps_script_url(),
+                params={"action": "invalidate"},
+                follow_redirects=True,
+            )
+    except Exception as exc:
+        print(f"[sync] ScriptProperties invalidation failed (non-fatal): {exc}")
+
+    # 3. Pre-warm Python cache with fresh data from Apps Script
     try:
         await fetch_data()
     except Exception as exc:
@@ -240,7 +367,7 @@ async def sync():
 
     return {
         "status":  "ok",
-        "message": "Cache cleared and pre-warmed successfully.",
+        "message": "All caches cleared (Python + Apps Script) and pre-warmed successfully.",
         "pre_warmed_range": "auto range (sheet min/max)",
     }
 
