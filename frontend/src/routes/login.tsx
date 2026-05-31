@@ -5,6 +5,8 @@ import { Gem, Lock, AlertCircle, Loader2, Chrome } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 
+const GOOGLE_CLIENT_ID = (import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined) ?? "";
+
 export const Route = createFileRoute("/login")({
   head: () => ({
     meta: [
@@ -29,6 +31,22 @@ function LoginPage() {
   const [signing, setSigning] = useState(false);
 
   // Redirect if already logged in
+  useEffect(() => {
+    if (!isLoading && isLoggedIn) {
+      navigate({ to: "/" });
+    }
+  }, [isLoggedIn, isLoading, navigate]);
+
+  if (!GOOGLE_CLIENT_ID) return <LoginConfigurationMissing />;
+
+  return <GoogleLoginCard />;
+}
+
+function GoogleLoginCard() {
+  const { login, loginError, clearError, isLoggedIn, isLoading } = useAuth();
+  const navigate = useNavigate();
+  const [signing, setSigning] = useState(false);
+
   useEffect(() => {
     if (!isLoading && isLoggedIn) {
       navigate({ to: "/" });
