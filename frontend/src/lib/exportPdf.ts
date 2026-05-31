@@ -1249,7 +1249,7 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
       const tags = [creative.creative_type, creative.city, creative.funnel, creative.category]
         .filter(Boolean).slice(0, 4);
       let tagX = textX;
-      const tagY = nameTopY + nameLines.length * 3.2 + 1.8;
+      const tagY = nameTopY + nameLines.length * 3.6 + subLines.length * 2.8 + 3.2;
       pdf.setFontSize(5.5);
       for (const t of tags) {
         if (!t || tagX - textX > textW - 14) break;
