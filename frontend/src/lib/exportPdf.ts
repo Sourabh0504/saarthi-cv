@@ -901,14 +901,15 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
   const effectiveH = Math.max(48, rowHeightPx || 96);
   const tH         = Math.max(20, Math.min(Math.round(effectiveH * PX_TO_MM * 0.90), 28));
   const CREATIVE_H = tH + 8;   // 4 mm padding top + 4 mm bottom
-  const GROUP_H    = 10;
-  const TOTAL_H    = 12;
-  const COL_H      = 9;
-  const FHD_H      = 24;
-  const FOOTER_H   = 10;
+  const GROUP_H    = 11;
+  const TOTAL_H    = 14;
+  const COL_H      = 10;
+  const FHD_H      = 32;
+  const FOOTER_H   = 12;
   const STRIPE_H   = 2.5;
+  const SUBSTRIPE_H = 1.2;
   // y where content rows begin
-  const START_Y    = STRIPE_H + FHD_H + COL_H + 2;
+  const START_Y    = STRIPE_H + SUBSTRIPE_H + FHD_H + COL_H + 3;
 
   // ── Compute total page height from row content ─────────────────────────────
   const contentH = tableRows.reduce((sum, row) =>
