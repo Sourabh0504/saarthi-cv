@@ -359,6 +359,7 @@ export function ExportModal({ open, onClose, onPick, context, visibleRows, total
     setDensity(null);
     setPreviewTheme("dark");
     setHoverTheme(null);
+    setIncludeCreatives(false);
   }, [open]);
 
   const liveTheme        = hoverTheme ?? previewTheme;
