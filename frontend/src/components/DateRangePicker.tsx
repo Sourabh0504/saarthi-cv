@@ -188,20 +188,30 @@ export function DateRangePicker({ value, onChange, minDate, maxDate }: Props) {
         <button
           type="button"
           className={cn(
-            "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs shrink-0",
-            "bg-background/40 border border-border transition-colors duration-150",
-            "hover:border-blue-500/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500",
-            open && "border-blue-500/60",
+            "group/btn h-11 flex items-center gap-2.5 pl-2 pr-3 rounded-lg shrink-0",
+            "border border-transparent transition-all duration-200",
+            "hover:bg-white/[0.04] hover:border-[var(--gold)]/20",
+            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--gold)]/40",
+            open && "bg-white/[0.04] border-[var(--gold)]/30",
           )}
         >
-          <Calendar className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-          <span className="font-medium text-foreground whitespace-nowrap">{triggerLabel}</span>
+          <span className="flex items-center justify-center w-7 h-7 rounded-md bg-[var(--gold)]/10 border border-[var(--gold)]/15 shrink-0">
+            <Calendar className="w-3.5 h-3.5 text-gold" />
+          </span>
+          <span className="flex flex-col items-start leading-tight">
+            <span className="text-[9px] uppercase tracking-[0.18em] text-muted-foreground/70 font-semibold">Period</span>
+            <span className="text-[12px] font-medium text-foreground whitespace-nowrap">{triggerLabel}</span>
+          </span>
           {cmpLabel && (
-            <span className="text-[10px] text-muted-foreground whitespace-nowrap hidden md:inline">
+            <span className="text-[10px] text-muted-foreground whitespace-nowrap hidden md:inline ml-1">
               vs {cmpLabel}
             </span>
           )}
-          <ChevronDown className={cn("w-3.5 h-3.5 text-muted-foreground transition-transform duration-200 shrink-0", open && "rotate-180")} />
+          <ChevronDown className={cn(
+            "w-3 h-3 ml-0.5 transition-all duration-200 shrink-0 text-muted-foreground/60",
+            "group-hover/btn:text-gold",
+            open && "rotate-180 text-gold",
+          )} />
         </button>
       </PopoverTrigger>
 
