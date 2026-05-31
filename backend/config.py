@@ -57,6 +57,19 @@ ALLOWED_ORIGINS: list[str] = origins
 API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
 API_PORT: int = int(os.getenv("API_PORT", "8000"))
 
+# ── Auth ──────────────────────────────────────────────────────────────────────
+# Google OAuth Client ID (same value as VITE_GOOGLE_CLIENT_ID on frontend)
+GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
+
+# Comma-separated list of Google emails allowed to log in.
+# Leave blank to allow ALL Google accounts.
+# Example: "sourabh@gmail.com,client@brand.com"
+ALLOWED_EMAILS: str = os.getenv("ALLOWED_EMAILS", "")
+
+# Secret key for signing JWT session tokens.
+# Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+JWT_SECRET: str = os.getenv("JWT_SECRET", "dev-secret-change-in-production-please")
+
 # ── SQLite Persistent Cache ───────────────────────────────────────────────────
 # Path to the SQLite file used as a durable cache tier.
 # This file persists across server restarts — enables instant warm starts.

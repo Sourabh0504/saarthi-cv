@@ -1,5 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useMemo, useState, useEffect, useCallback, useRef } from "react";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   Gem, Sparkles, Moon, Sun, LayoutGrid, Trophy,
   IndianRupee, MousePointerClick, Eye, Coins, PanelLeftClose,
@@ -126,6 +127,18 @@ function buildPdfTableRows(
 // Portal Component
 // ─────────────────────────────────────────────────────────────────────────────
 function Portal() {
+  const { user, isLoggedIn, isLoading: authLoading, logout } = useAuth();
+  const navigate = useNavigate();
+
+  // ── Auth guard ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!authLoading && !isLoggedIn) {
+      navigate({ to: "/login" });
+    }
+  }, [isLoggedIn, authLoading, navigate]);
+
+  if (authLoading || !isLoggedIn) return null;
+
   // Date range defaults to auto (sheet min/max). Inputs are set after first load.
   const startDef = "";
   const endDef   = "";
@@ -688,6 +701,29 @@ function Portal() {
             >
               {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </Button>
+
+            {/* Profile avatar */}
+            <Link to="/profile" title={`Signed in as ${user?.email}`}>
+              <div
+                className="w-8 h-8 rounded-full p-0.5 cursor-pointer hover:scale-105 transition-transform"
+                style={{ background: "linear-gradient(135deg, oklch(0.78 0.15 85) 0%, oklch(0.65 0.18 70) 100%)" }}
+              >
+                {user?.picture ? (
+                  <img
+                    src={user.picture}
+                    alt={user.name || user.email}
+                    className="w-full h-full rounded-full object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <div className="w-full h-full rounded-full bg-[oklch(0.20_0.008_260)] flex items-center justify-center">
+                    <span className="text-[10px] font-bold" style={{ color: "oklch(0.78 0.15 85)" }}>
+                      {(user?.name || user?.email || "U").charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </Link>
           </div>
         </div>
       </header>

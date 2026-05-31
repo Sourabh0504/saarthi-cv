@@ -21,9 +21,10 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 import asyncio
 
-from fastapi import FastAPI, HTTPException, Query, Header, Response
+from fastapi import FastAPI, HTTPException, Query, Header, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from pydantic import BaseModel
 
 import cache as cache_module
 import db as db_module
@@ -32,6 +33,10 @@ from apps_script_connector import (
 )
 from calculator import top_performers
 from config import origins, get_apps_script_url
+from auth import (
+    verify_google_access_token, check_whitelist,
+    create_session_token, require_user,
+)
 
 
 # ── Lifespan: init DB, pre-warm cache, periodic refresh, clean shutdown ──────
@@ -384,3 +389,52 @@ def _validate_dates(start: str, end: str) -> None:
         raise HTTPException(status_code=400, detail="Dates must be in YYYY-MM-DD format.")
     if start > end:
         raise HTTPException(status_code=400, detail="start date must be <= end date.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Auth routes
+# ─────────────────────────────────────────────────────────────────────────────
+
+class GoogleAuthRequest(BaseModel):
+    access_token: str
+
+
+@app.post("/auth/google", tags=["Auth"])
+async def auth_google(body: GoogleAuthRequest):
+    """
+    Exchange a Google access token for a CreativeVisibility session JWT.
+
+    Flow:
+      1. Frontend calls Google OAuth (via @react-oauth/google)
+      2. Frontend receives access_token and POSTs it here
+      3. We verify with Google's userinfo endpoint
+      4. We check the email against the whitelist
+      5. We return a signed JWT + user profile
+    """
+    # 1. Verify with Google
+    profile = await verify_google_access_token(body.access_token)
+
+    # 2. Check whitelist
+    email = profile.get("email", "")
+    if not email:
+        raise HTTPException(status_code=401, detail="Could not retrieve email from Google.")
+    check_whitelist(email)
+
+    # 3. Build clean user object
+    user = {
+        "sub":            profile.get("sub", ""),
+        "email":          email,
+        "name":           profile.get("name", ""),
+        "picture":        profile.get("picture", ""),
+        "email_verified": profile.get("email_verified", False),
+    }
+
+    # 4. Issue JWT
+    token = create_session_token(user)
+    return {"token": token, "user": user}
+
+
+@app.get("/auth/me", tags=["Auth"])
+async def auth_me(user: dict = Depends(require_user)):
+    """Return the currently authenticated user (validates the JWT)."""
+    return {"user": user}
