@@ -917,8 +917,8 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
   const PAGE_H = START_Y + contentH + FOOTER_H + MV;
 
   // ── Thumbnail dimensions (left-aligned inside the label column) ────────────
-  const THUMB_H = CREATIVE_H - 6;
-  const THUMB_W = Math.min(34, Math.max(22, THUMB_H * 1.6));
+  const THUMB_H = CREATIVE_H - 4;
+  const THUMB_W = Math.min(42, Math.max(28, THUMB_H * 1.6));
 
   // ── Pre-load thumbnails for all creative rows in parallel ──────────────────
   const imgMap = new Map<string, HTMLImageElement>();
