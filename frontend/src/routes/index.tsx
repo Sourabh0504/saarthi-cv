@@ -732,8 +732,8 @@ function Portal() {
             </div>
           )}
 
-          {/* ── Sticky filter + KPI strip ── */}
-          <div className="sticky top-[60px] z-20 -mx-6 px-6 pt-2 pb-3 backdrop-blur-2xl bg-background/95 border-b border-white/10 shadow-[0_8px_24px_-12px_rgba(0,0,0,0.6)] space-y-3 no-print">
+          {/* ── Sticky filter bar (KPIs scroll naturally below) ── */}
+          <div className="sticky top-[60px] z-20 -mx-6 px-6 pt-2 pb-3 backdrop-blur-2xl bg-background/95 border-b border-white/10 shadow-[0_8px_24px_-12px_rgba(0,0,0,0.6)] no-print">
             <FilterPanel
               filters={filters}
               setFilters={setFiltersSafe}
@@ -760,7 +760,10 @@ function Portal() {
                 />
               }
             />
-            {/* ── Compare-period warning ── */}
+          </div>
+
+          {/* ── Non-sticky compare warning + KPI strip ── */}
+          <div className="space-y-3 no-print">
             {compareWarning && (
               <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5">
                 <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
@@ -796,6 +799,7 @@ function Portal() {
               </div>
             )}
           </div>
+
 
           {/* ── Loading skeleton with progress bar ── */}
           {loading && (
