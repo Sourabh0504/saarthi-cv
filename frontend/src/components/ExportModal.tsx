@@ -351,6 +351,7 @@ export function ExportModal({ open, onClose, onPick, context, visibleRows, total
   const [density, setDensity]           = useState<number | null>(null);
   const [previewTheme, setPreviewTheme] = useState<"dark" | "light">("dark");
   const [hoverTheme, setHoverTheme]     = useState<"dark" | "light" | null>(null);
+  const [includeCreatives, setIncludeCreatives] = useState(false);
 
   useEffect(() => {
     if (!open) return;
