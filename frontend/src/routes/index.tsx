@@ -898,6 +898,8 @@ function Portal() {
                       hierarchy={hierarchy} creativeRowHeight={rowHeight}
                       sortBy={sortBy}
                       onSortByChange={setSortBy}
+                      activeLevel={directoryLevel}
+                      onActiveLevelChange={setDirectoryLevel}
                       onCreativeClick={openDetail}
                       compareMode={filters.compareMode}
                       compareMetrics={compareMetricsMap ?? undefined}
