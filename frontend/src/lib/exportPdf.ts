@@ -1082,7 +1082,47 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
   drawColHdr(STRIPE_H + SUBSTRIPE_H + FHD_H);
   let y = START_Y;
 
-  for (const row of tableRows) {
+  // ── Tree-connector helpers ─────────────────────────────────────────────────
+  // Determines whether, scanning forward from row i, a later row at depth
+  // (a+1) exists before we exit the subtree of ancestor at depth a.
+  // Used to decide whether to draw the vertical guide rail at column a+1.
+  const continuesAt = (i: number, a: number): boolean => {
+    for (let j = i + 1; j < tableRows.length; j++) {
+      const dj = tableRows[j].kind === "total" ? -1 : (tableRows[j] as any).depth;
+      if (dj <= a) return false;
+      if (dj === a + 1) return true;
+    }
+    return false;
+  };
+
+  // Soft connector color — uses border tone so it reads as structure, not noise.
+  const TREE: readonly [number, number, number] =
+    theme === "dark" ? [70, 62, 38] as const : [200, 175, 110] as const;
+
+  const drawTreeConnectors = (i: number, depth: number, rowY: number, rowH: number) => {
+    if (depth <= 0) return;
+    // Ancestor vertical rails (full height) for any ancestor still "open".
+    for (let a = 0; a < depth - 1; a++) {
+      if (continuesAt(i, a)) {
+        const rx = MH + 4 + a * INDENT + 2;
+        ln(rx, rowY, rx, rowY + rowH, TREE, 0.25);
+      }
+    }
+    // Current row's elbow at depth-1 rail.
+    const railX = MH + 4 + (depth - 1) * INDENT + 2;
+    const midY  = rowY + rowH / 2;
+    const labelX = MH + 4 + depth * INDENT;
+    const isLast = !continuesAt(i, depth - 1);
+    // Vertical: from top of row to mid (always). If not last sibling, continue to bottom.
+    ln(railX, rowY, railX, midY, TREE, 0.25);
+    if (!isLast) ln(railX, midY, railX, rowY + rowH, TREE, 0.25);
+    // Horizontal elbow into the label area.
+    ln(railX, midY, labelX - 0.5, midY, TREE, 0.25);
+  };
+
+  for (let i = 0; i < tableRows.length; i++) {
+    const row = tableRows[i];
+
 
     // TOTAL row
     if (row.kind === "total") {
