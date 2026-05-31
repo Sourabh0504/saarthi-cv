@@ -162,8 +162,6 @@ function Portal() {
   const [pdfLoading, setPdfLoading]     = useState(false);
   const [activeTab, setActiveTab]       = useState<"directory" | "top">("directory");
 
-  if (authLoading || !isLoggedIn) return null;
-
   // ── Raw data (loaded once, aggregated client-side) ────────────────────────────────
   const [rawDimensions, setRawDimensions] = useState<CreativeDimensionMap>({});
   const [rawDailyRows,  setRawDailyRows]  = useState<RawDailyRow[]>([]);
@@ -637,6 +635,8 @@ function Portal() {
   // ─────────────────────────────────────────────────────────────────────────
   // Render
   // ─────────────────────────────────────────────────────────────────────────
+  if (authLoading || !isLoggedIn) return null;
+
   return (
     <div id="print-root" className="min-h-screen flex flex-col relative" data-print-theme="light">
       <div className="aurora-bg no-print"  aria-hidden />
