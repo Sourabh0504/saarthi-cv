@@ -584,7 +584,7 @@ function Portal() {
 
     const enabledCols = Object.entries(columns).filter(([, v]) => v).map(([k]) => k);
 
-    const tableRows = buildPdfTableRows(exportRows, hierarchy, exportTotals);
+    const tableRows = buildPdfTableRows(exportRows, hierarchy, exportTotals, includeCreatives);
 
     try {
       await exportDashboardPdf({
