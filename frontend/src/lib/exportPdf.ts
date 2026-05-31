@@ -915,19 +915,8 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
     sum + (row.kind === "total" ? TOTAL_H : row.kind === "group" ? GROUP_H : CREATIVE_H), 0);
   const PAGE_H = START_Y + contentH + FOOTER_H + MV;
 
-  // ── Load thumbnail images in parallel (fonts already loaded above) ────────
-  const imgMap = new Map<string, HTMLImageElement | null>();
-  await Promise.allSettled(
-    tableRows
-      .filter((r): r is PdfTableRow & { kind: "creative" } => r.kind === "creative")
-      .slice(0, 300)
-      .map(async ({ creative }) => {
-        const ytId = creative.creative_type === "Video" ? getYouTubeId(creative.creative_url) : null;
-        const src  = creative.creative_type === "Image" ? creative.creative_url
-                   : ytId ? `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg` : null;
-        if (src) imgMap.set(creative.creative_id, await loadImage(src));
-      }),
-  );
+  // Thumbnails intentionally omitted — client-shareable reports render as
+  // pure typography + metrics, matching the dashboard's structural rhythm.
 
   // ── Create single-page PDF with computed height ────────────────────────────
   const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: [PW, PAGE_H] });
