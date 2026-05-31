@@ -1166,7 +1166,13 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
       const ix = MH + 4 + row.depth * INDENT;
       const my = y + GROUP_H/2 + 2;
       const arrowCol: readonly[number,number,number] = row.depth === 0 ? GOLD : MUTED;
-      tx("▸", ix, my, 6, arrowCol);
+      // Filled triangle (▸) — drawn as vector so it renders in every PDF font
+      const aSize = row.depth === 0 ? 2.2 : 1.8;
+      const aX = ix;
+      const aY = my - 2;
+      pdf.setFillColor(arrowCol[0], arrowCol[1], arrowCol[2]);
+      pdf.triangle(aX, aY, aX, aY + aSize * 2, aX + aSize * 1.7, aY + aSize, "F");
+
       const lsz = row.depth === 0 ? 8.5 : row.depth === 1 ? 7.5 : 7;
       const lbd = row.depth <= 1;
       tx(row.label, ix+5.5, my, lsz, TEXT, lbd);
