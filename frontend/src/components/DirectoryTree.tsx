@@ -385,16 +385,15 @@ export function DirectoryTree({
 
   let hoverStyle: React.CSSProperties | null = null;
   if (hover) {
-    const PREV_W = 480; const PREV_H = 480; const pad = 16;
-    let left = hover.x + 24;
-    let top  = hover.y - PREV_H / 2;
-    if (typeof window !== "undefined") {
-      if (left + PREV_W + pad > window.innerWidth)  left = hover.x - PREV_W - 24;
-      if (top < pad)                                top  = pad;
-      if (top + PREV_H + pad > window.innerHeight)  top  = window.innerHeight - PREV_H - pad;
-    }
-    hoverStyle = { left, top, width: PREV_W };
+    // Anchor preview to the right edge of the viewport, vertically centered.
+    // Width/height are intrinsic to the media (capped by max-w/max-h on the inner element).
+    hoverStyle = {
+      right: 24,
+      top: "50%",
+      transform: "translateY(-50%)",
+    };
   }
+
 
   const metricColWidth = 120;
   const shareColWidth  = 100;
