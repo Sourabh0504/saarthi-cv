@@ -171,6 +171,9 @@
   .shadow-gold { box-shadow: var(--shadow-gold); }
   .shadow-card { box-shadow: var(--shadow-card); }
   .hairline { border-color: var(--color-border); }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+
 
   .aurora-bg {
     position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none;
