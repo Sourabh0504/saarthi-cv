@@ -550,7 +550,7 @@ function Portal() {
     toast.success(`Exported ${visibleRows.length} creatives to CSV`);
   };
 
-  const handleExportPDF = async ({ theme, scope, rowHeight: rowHeightOverride }: ExportPick) => {
+  const handleExportPDF = async ({ theme, scope, rowHeight: rowHeightOverride, includeCreatives }: ExportPick) => {
     setExportOpen(false);
     setPdfLoading(true);
 
