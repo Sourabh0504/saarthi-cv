@@ -100,7 +100,7 @@ function buildTree(
     if (depth >= hierarchy.length) {
       const leaves = items.map(r => ({
         key:            `${parentKey}>${r.creative.creative_id}`,
-        label:          r.creative.headline ?? r.creative.creative_id,
+        label:          r.creative.creative_url ?? r.creative.headline ?? r.creative.creative_id,
         depth,
         dim:            "creative" as const,
         metrics:        r.metrics,
