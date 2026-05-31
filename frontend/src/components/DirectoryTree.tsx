@@ -385,16 +385,15 @@ export function DirectoryTree({
 
   let hoverStyle: React.CSSProperties | null = null;
   if (hover) {
-    const PREV_W = 480; const PREV_H = 480; const pad = 16;
-    let left = hover.x + 24;
-    let top  = hover.y - PREV_H / 2;
-    if (typeof window !== "undefined") {
-      if (left + PREV_W + pad > window.innerWidth)  left = hover.x - PREV_W - 24;
-      if (top < pad)                                top  = pad;
-      if (top + PREV_H + pad > window.innerHeight)  top  = window.innerHeight - PREV_H - pad;
-    }
-    hoverStyle = { left, top, width: PREV_W };
+    // Anchor preview to the right edge of the viewport, vertically centered.
+    // Width/height are intrinsic to the media (capped by max-w/max-h on the inner element).
+    hoverStyle = {
+      right: 24,
+      top: "50%",
+      transform: "translateY(-50%)",
+    };
   }
+
 
   const metricColWidth = 120;
   const shareColWidth  = 100;
@@ -694,21 +693,33 @@ export function DirectoryTree({
           className="fixed z-[100] pointer-events-none animate-in fade-in zoom-in-95 duration-150"
           style={hoverStyle}
         >
-          <div className="glass-strong rounded-2xl overflow-hidden border border-gold/30 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.8)]">
-            <div className="aspect-square bg-black/40 relative">
+          <div className="glass-strong rounded-2xl overflow-hidden border border-gold/30 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.8)] flex flex-col"
+               style={{ maxWidth: "min(560px, 42vw)", maxHeight: "82vh" }}>
+            <div className="bg-black/40 relative flex items-center justify-center overflow-hidden"
+                 style={{ maxHeight: "68vh" }}>
               {hover.creative.creative_type === "Image" && (
-                <img src={hover.creative.creative_url} alt={hover.creative.headline ?? ""} className="w-full h-full object-cover" />
+                <img
+                  src={hover.creative.creative_url}
+                  alt={hover.creative.headline ?? ""}
+                  className="block w-auto h-auto max-w-full object-contain"
+                  style={{ maxHeight: "68vh" }}
+                />
               )}
               {hover.creative.creative_type === "Video" && (() => {
                 const id = getYouTubeId(hover.creative.creative_url);
                 return id ? (
-                  <img src={`https://i.ytimg.com/vi/${id}/maxresdefault.jpg`} alt="" className="w-full h-full object-cover" />
+                  <img
+                    src={`https://i.ytimg.com/vi/${id}/maxresdefault.jpg`}
+                    alt=""
+                    className="block w-auto h-auto max-w-full object-contain"
+                    style={{ maxHeight: "68vh" }}
+                  />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center text-muted-foreground">No preview</div>
+                  <div className="w-[480px] h-[270px] flex items-center justify-center text-muted-foreground">No preview</div>
                 );
               })()}
               {hover.creative.creative_type === "Text" && (
-                <div className="w-full h-full p-6 bg-white text-[#202124] flex flex-col justify-center gap-2">
+                <div className="w-[480px] p-6 bg-white text-[#202124] flex flex-col justify-center gap-2">
                   <div className="text-xs flex items-center gap-1">
                     <span className="inline-block w-3 h-3 rounded-full bg-[#4285F4]" />
                     Ad · {new URL(hover.creative.creative_url).hostname}
@@ -718,6 +729,7 @@ export function DirectoryTree({
                 </div>
               )}
             </div>
+
             <div className="p-3 space-y-1.5 bg-background/80">
               <div className="font-display font-semibold text-sm truncate">{hover.creative.headline ?? hover.creative.creative_id}</div>
               <div className="text-[11px] text-muted-foreground flex flex-wrap gap-1.5">
