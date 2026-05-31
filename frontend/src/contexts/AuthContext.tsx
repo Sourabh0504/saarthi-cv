@@ -16,6 +16,17 @@ import {
   loginWithGoogle as apiLoginWithGoogle,
 } from "@/lib/auth";
 
+const GOOGLE_CLIENT_ID = (import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined) ?? "";
+const USE_DEV_PREVIEW_SESSION = import.meta.env.DEV && !GOOGLE_CLIENT_ID;
+
+const DEV_PREVIEW_USER: AuthUser = {
+  sub: "dev-preview",
+  email: "sourabhchaudhari8830@gmail.com",
+  name: "Sourabh Chaudhari",
+  picture: "",
+  email_verified: true,
+};
+
 // ── Context shape ─────────────────────────────────────────────────────────────
 
 interface AuthContextValue {
@@ -41,6 +52,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // ── Init from localStorage on mount ────────────────────────────────────────
   useEffect(() => {
+    if (USE_DEV_PREVIEW_SESSION) {
+      setToken("dev-preview-token");
+      setUser(DEV_PREVIEW_USER);
+      setIsLoading(false);
+      return;
+    }
+
     if (isSessionValid()) {
       setToken(getStoredToken());
       setUser(getStoredUser());

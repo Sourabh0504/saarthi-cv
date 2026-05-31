@@ -102,33 +102,16 @@ function RootShell({ children }: { children: React.ReactNode }) {
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
-  // Guard: if VITE_GOOGLE_CLIENT_ID is not configured, show a clear setup message
-  // instead of crashing the whole app with "Missing required parameter client_id"
-  if (!GOOGLE_CLIENT_ID) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
-        <div className="max-w-md text-center space-y-3">
-          <h1 className="text-xl font-semibold text-foreground">Configuration required</h1>
-          <p className="text-sm text-muted-foreground">
-            <code className="text-primary">VITE_GOOGLE_CLIENT_ID</code> is not set.
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Add it to <code>.env.local</code> (local) or Vercel environment variables (production),
-            then redeploy.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-      <AuthProvider>
-        <QueryClientProvider client={queryClient}>
-          <Outlet />
-          <Toaster />
-        </QueryClientProvider>
-      </AuthProvider>
-    </GoogleOAuthProvider>
+  const content = (
+    <AuthProvider>
+      <QueryClientProvider client={queryClient}>
+        <Outlet />
+        <Toaster />
+      </QueryClientProvider>
+    </AuthProvider>
   );
+
+  return GOOGLE_CLIENT_ID ? (
+    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>{content}</GoogleOAuthProvider>
+  ) : content;
 }

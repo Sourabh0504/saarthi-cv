@@ -137,8 +137,6 @@ function Portal() {
     }
   }, [isLoggedIn, authLoading, navigate]);
 
-  if (authLoading || !isLoggedIn) return null;
-
   // Date range defaults to auto (sheet min/max). Inputs are set after first load.
   const startDef = "";
   const endDef   = "";
@@ -637,6 +635,8 @@ function Portal() {
   // ─────────────────────────────────────────────────────────────────────────
   // Render
   // ─────────────────────────────────────────────────────────────────────────
+  if (authLoading || !isLoggedIn) return null;
+
   return (
     <div id="print-root" className="min-h-screen flex flex-col relative" data-print-theme="light">
       <div className="aurora-bg no-print"  aria-hidden />
