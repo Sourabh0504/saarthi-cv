@@ -106,7 +106,7 @@ function LoginPage() {
                 CreativeVisibility
               </h1>
               <p className="mt-1 text-xs uppercase tracking-[0.2em] text-[oklch(0.78_0.15_85)]">
-                Luxury Jewelry · Performance Portal
+                Aukera Jewellery · Performance Portal
               </p>
             </div>
           </div>

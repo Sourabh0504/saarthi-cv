@@ -206,7 +206,7 @@ function TablePreviewPane({
             CreativeVisibility
           </div>
           <div style={{ fontSize: 6, color: C.muted, marginTop: 1 }}>
-            Luxury Jewelry · Campaign Performance Portal
+            Aukera Jewellery · Campaign Performance Portal
           </div>
         </div>
         <div style={{ textAlign: "right" }}>

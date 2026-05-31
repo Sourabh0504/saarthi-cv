@@ -40,7 +40,7 @@ export type { Creative };
 export const Route = createFileRoute("/")(({
   head: () => ({
     meta: [
-      { title: "CreativeVisibility — Luxury Jewelry Campaign Portal" },
+      { title: "CreativeVisibility — Aukera Jewellery Campaign Portal" },
       { name: "description", content: "Real-time visual creative directory and performance reporting for high-budget jewelry Google Ads campaigns." },
     ],
     links: [
@@ -663,7 +663,7 @@ function Portal() {
             </div>
             <div>
               <div className="font-display font-bold tracking-tight leading-none">CreativeVisibility</div>
-              <div className="text-[10px] text-muted-foreground uppercase tracking-widest">Luxury Jewelry · Performance Portal</div>
+              <div className="text-[10px] text-muted-foreground uppercase tracking-widest">Aukera Jewellery · Performance Portal</div>
             </div>
           </div>
 

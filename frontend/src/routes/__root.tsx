@@ -75,7 +75,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "CreativeVisibility" },
-      { name: "description", content: "Luxury Jewelry Campaign Performance Portal" },
+      { name: "description", content: "Aukera Jewellery Campaign Performance Portal" },
     ],
     links: [{ rel: "stylesheet", href: appCss }],
   }),
