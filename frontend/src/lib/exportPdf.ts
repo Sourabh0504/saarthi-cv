@@ -937,7 +937,15 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
   }));
 
   // ── Create single-page PDF with computed height ────────────────────────────
-  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: [PW, PAGE_H] });
+  // jsPDF normalizes `format` to match `orientation` (it will swap width/height
+  // if they don't agree). PW is fixed at 297mm; PAGE_H grows with content and
+  // can be shorter than PW when there are few rows (e.g. level-1 listing).
+  // Pick orientation from the actual dims so width stays = PW and height = PAGE_H.
+  const pdf = new jsPDF({
+    orientation: PAGE_H >= PW ? "portrait" : "landscape",
+    unit: "mm",
+    format: [PW, PAGE_H],
+  });
 
   const FONT  = fonts.poppinsR    ? "poppins"    : (notoB64Dash ? "notosans" : "helvetica");
   const FONTD = fonts.montserratB ? "montserrat" : (notoB64Dash ? "notosans" : "helvetica");
