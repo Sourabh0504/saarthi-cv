@@ -1160,6 +1160,9 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
       }
       ln(MH, y+GROUP_H, MH+CW, y+GROUP_H, BDR, 0.18);
 
+      // Tree connectors (├─ │ └─) in the indent gutter
+      drawTreeConnectors(i, row.depth, y, GROUP_H);
+
       const ix = MH + 4 + row.depth * INDENT;
       const my = y + GROUP_H/2 + 2;
       const arrowCol: readonly[number,number,number] = row.depth === 0 ? GOLD : MUTED;
