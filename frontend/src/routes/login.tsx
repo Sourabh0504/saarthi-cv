@@ -26,20 +26,30 @@ export const Route = createFileRoute("/login")({
 });
 
 function LoginPage() {
-  const { login, loginError, clearError, isLoggedIn, isLoading } = useAuth();
-  const navigate = useNavigate();
-  const [signing, setSigning] = useState(false);
-
-  // Redirect if already logged in
-  useEffect(() => {
-    if (!isLoading && isLoggedIn) {
-      navigate({ to: "/" });
-    }
-  }, [isLoggedIn, isLoading, navigate]);
-
   if (!GOOGLE_CLIENT_ID) return <LoginConfigurationMissing />;
 
   return <GoogleLoginCard />;
+}
+
+function LoginConfigurationMissing() {
+  return (
+    <div className="relative min-h-screen flex items-center justify-center overflow-hidden bg-[oklch(0.12_0.005_260)] px-4 font-sans">
+      <div className="aurora-bg" aria-hidden />
+      <div className="aurora-grid" aria-hidden />
+      <div className="relative z-10 max-w-md rounded-3xl border border-white/10 p-8 text-center shadow-2xl backdrop-blur-2xl">
+        <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-white/5">
+          <Lock className="h-6 w-6 text-[oklch(0.78_0.15_85)]" />
+        </div>
+        <h1 className="text-xl font-bold text-white">Google login is not configured</h1>
+        <p className="mt-3 text-sm leading-relaxed text-white/50">
+          Add the Google Client ID to enable restricted Google sign-in for approved users.
+        </p>
+        <Link to="/" className="mt-6 inline-flex text-sm font-semibold text-[oklch(0.78_0.15_85)] hover:opacity-80">
+          Back to dashboard
+        </Link>
+      </div>
+    </div>
+  );
 }
 
 function GoogleLoginCard() {
