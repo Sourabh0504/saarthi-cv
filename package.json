@@ -1,0 +1,10 @@
+{
+  "name": "creative-vault-root",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": ["frontend"],
+  "scripts": {
+    "dev": "cd frontend && bun run dev",
+    "build": "cd frontend && bun run build"
+  }
+}
