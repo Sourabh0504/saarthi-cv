@@ -1,0 +1,3 @@
+[run]
+dev = "bash -c 'cd frontend && bun install --silent && bun run dev -- --host'"
+build = "bash -c 'cd frontend && bun install --silent && bun run build'"
