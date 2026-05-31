@@ -78,11 +78,13 @@ function buildPdfTableRows(
   rows:     Array<{ creative: Creative; metrics: ComputedMetrics }>,
   hierarchy: Dim[],
   totals:   ComputedMetrics,
+  includeCreatives: boolean,
 ): PdfTableRow[] {
   const result: PdfTableRow[] = [{ kind: "total", count: rows.length, metrics: totals }];
 
   const recurse = (items: typeof rows, dims: Dim[], depth: number) => {
     if (dims.length === 0 || items.length === 0) {
+      if (!includeCreatives) return;
       for (const item of items) {
         result.push({ kind: "creative", creative: item.creative, metrics: item.metrics, depth });
       }
