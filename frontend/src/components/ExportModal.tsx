@@ -20,9 +20,10 @@ export interface ExportContext {
 }
 
 export interface ExportPick {
-  theme:     "light" | "dark";
-  scope:     "current" | "all";
-  rowHeight: number | null;
+  theme:            "light" | "dark";
+  scope:            "current" | "all";
+  rowHeight:        number | null;
+  includeCreatives: boolean;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -350,6 +351,7 @@ export function ExportModal({ open, onClose, onPick, context, visibleRows, total
   const [density, setDensity]           = useState<number | null>(null);
   const [previewTheme, setPreviewTheme] = useState<"dark" | "light">("dark");
   const [hoverTheme, setHoverTheme]     = useState<"dark" | "light" | null>(null);
+  const [includeCreatives, setIncludeCreatives] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -357,6 +359,7 @@ export function ExportModal({ open, onClose, onPick, context, visibleRows, total
     setDensity(null);
     setPreviewTheme("dark");
     setHoverTheme(null);
+    setIncludeCreatives(false);
   }, [open]);
 
   const liveTheme        = hoverTheme ?? previewTheme;
@@ -539,12 +542,30 @@ export function ExportModal({ open, onClose, onPick, context, visibleRows, total
             </div>
           </div>
 
+          {/* ── Depth toggle ──────────────────────────────────────────── */}
+          <label className="flex items-start gap-3 rounded-xl border border-border/60 bg-background/40 px-4 py-3 cursor-pointer hover:border-gold/40 transition">
+            <input
+              type="checkbox"
+              checked={includeCreatives}
+              onChange={(e) => setIncludeCreatives(e.target.checked)}
+              className="mt-0.5 w-4 h-4 accent-gold cursor-pointer"
+            />
+            <div className="min-w-0">
+              <div className="text-[12px] font-medium">Include individual creatives</div>
+              <div className="text-[10.5px] text-muted-foreground mt-0.5">
+                Off by default — the PDF stops at your selected grouping level
+                {hierarchy.length ? ` (${hierarchy.map(d => DIM_META[d].label).join(" › ")})` : ""}.
+                Turn on to expand every group down to individual creatives with thumbnails.
+              </div>
+            </div>
+          </label>
+
           {/* ── Download CTA ──────────────────────────────────────────── */}
           <div className="space-y-2">
             <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">Download as</div>
             <div className="grid grid-cols-2 gap-3">
               <button
-                onClick={() => onPick({ theme: "light", scope, rowHeight: density })}
+                onClick={() => onPick({ theme: "light", scope, rowHeight: density, includeCreatives })}
                 onMouseEnter={() => setHoverTheme("light")}
                 onMouseLeave={() => setHoverTheme(null)}
                 className="group rounded-xl border-2 border-border/60 p-5 bg-white text-gray-900 hover:border-gold/70 transition-all duration-200 text-left"
@@ -554,7 +575,7 @@ export function ExportModal({ open, onClose, onPick, context, visibleRows, total
                 <div className="text-xs text-gray-500 mt-1">Classic client-ready report</div>
               </button>
               <button
-                onClick={() => onPick({ theme: "dark", scope, rowHeight: density })}
+                onClick={() => onPick({ theme: "dark", scope, rowHeight: density, includeCreatives })}
                 onMouseEnter={() => setHoverTheme("dark")}
                 onMouseLeave={() => setHoverTheme(null)}
                 className="group rounded-xl border-2 border-border/60 p-5 bg-[#0a0b0f] text-gray-100 hover:border-gold/70 transition-all duration-200 text-left"
