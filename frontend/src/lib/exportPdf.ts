@@ -1007,33 +1007,53 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
     : [context.dateRange, context.dateRange];
 
   const drawHeader = () => {
+    // Top accent: gold hairline + onyx band
     fR(0, 0, PW, STRIPE_H, GOLD);
-    fR(0, STRIPE_H, PW, FHD_H, HDR);
-    ln(0, STRIPE_H+FHD_H, PW, STRIPE_H+FHD_H, GOLD, 0.45);
-    tx("CreativeVisibility",                           MH,    STRIPE_H+9.5, 14, GOLD, true, "left", true);
-    tx("Luxury Jewelry · Campaign Performance Portal", MH,    STRIPE_H+15.5, 7, MUTED);
-    tx(safe(`${fd(si)}  →  ${fd(ei)}`),               PW-MH, STRIPE_H+9.5, 8.5, GOLD, true, "right");
-    const ts = new Date().toLocaleString("en-IN",{dateStyle:"medium",timeStyle:"short"});
-    tx(`Generated: ${ts}`,                            PW-MH, STRIPE_H+15.5, 6.5, MUTED, false, "right");
-    // Filter summary — left; selection scope — right
-    const filterStr = context.filterBits.length ? context.filterBits.join("  ·  ") : "All filters";
-    tx(filterStr,                                      MH,    STRIPE_H+21.5, 5.5, MUTED);
-    tx(context.selectionLabel,                         PW-MH, STRIPE_H+21.5, 6, GOLD, true, "right");
+    fR(0, STRIPE_H, PW, SUBSTRIPE_H, theme === "light" ? [232, 220, 180] : [38, 32, 16]);
+    fR(0, STRIPE_H + SUBSTRIPE_H, PW, FHD_H, HDR);
+    ln(0, STRIPE_H + SUBSTRIPE_H + FHD_H, PW, STRIPE_H + SUBSTRIPE_H + FHD_H, GOLD, 0.5);
+
+    const baseY = STRIPE_H + SUBSTRIPE_H;
+
+    // ── Left: wordmark + tagline ───────────────────────────────────────────
+    tx("CreativeVisibility", MH, baseY + 11, 16, GOLD, true, "left", true);
+    // Slim accent rule under the wordmark
+    fR(MH, baseY + 13.2, 22, 0.4, GOLD);
+    tx("Luxury Jewelry  ·  Campaign Performance Report",
+       MH, baseY + 18.5, 7, MUTED);
+
+    // ── Right: report period block ─────────────────────────────────────────
+    tx("REPORT PERIOD", PW - MH, baseY + 6.5, 5.5, MUTED, true, "right");
+    tx(safe(`${fd(si)}  →  ${fd(ei)}`), PW - MH, baseY + 12.5, 10, GOLD, true, "right", true);
+    const ts = new Date().toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
+    tx(`Generated ${ts}`, PW - MH, baseY + 17.5, 6, MUTED, false, "right");
+
+    // ── Bottom strip: filters · selection ──────────────────────────────────
+    const stripY = baseY + FHD_H - 7;
+    ln(MH, stripY - 2.5, MH + CW, stripY - 2.5, BDR, 0.15);
+    const filterStr = context.filterBits.length ? context.filterBits.join("   ·   ") : "All filters";
+    tx("FILTERS", MH, stripY + 1.5, 5, MUTED, true);
+    tx(filterStr, MH + 13, stripY + 1.5, 6, TEXT);
+    tx(context.selectionLabel, PW - MH, stripY + 1.5, 6.5, GOLD, true, "right");
   };
 
   // footer (bottom of document — single occurrence)
   const drawFooter = () => {
-    const fy = PAGE_H - MV - FOOTER_H + 5;
-    ln(MH, PAGE_H-MV-FOOTER_H, MH+CW, PAGE_H-MV-FOOTER_H, BDR, 0.2);
-    tx("CreativeVisibility  ·  Confidential",     MH,    fy, 5.5, MUTED);
-    tx(safe(`${context.selectedCount} creatives  ·  ${fd(si)} → ${fd(ei)}`), PW-MH, fy, 5.5, MUTED, false, "right");
-    tx("© 2026 CreativeVisibility. All rights reserved.", PW/2, fy, 5.5, MUTED, false, "center");
+    const fy = PAGE_H - MV - FOOTER_H + 6;
+    // Top gold hairline + subtle border above the footer block
+    ln(MH, PAGE_H - MV - FOOTER_H, MH + CW, PAGE_H - MV - FOOTER_H, GOLD, 0.3);
+    ln(MH, PAGE_H - MV - FOOTER_H + 1.2, MH + CW, PAGE_H - MV - FOOTER_H + 1.2, BDR, 0.12);
+    tx("CreativeVisibility  ·  Confidential", MH, fy, 5.5, MUTED, true);
+    tx(safe(`${context.selectedCount} creatives  ·  ${fd(si)} → ${fd(ei)}`),
+       PW - MH, fy, 5.5, MUTED, false, "right");
+    tx("© 2026 CreativeVisibility. All rights reserved.",
+       PW / 2, fy, 5.5, MUTED, false, "center");
   };
 
   // ── Draw document ──────────────────────────────────────────────────────────
   fR(0, 0, PW, PAGE_H, BG);   // page background
   drawHeader();
-  drawColHdr(STRIPE_H + FHD_H);
+  drawColHdr(STRIPE_H + SUBSTRIPE_H + FHD_H);
   let y = START_Y;
 
   for (const row of tableRows) {
