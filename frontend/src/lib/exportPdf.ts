@@ -1164,21 +1164,22 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
       drawTreeConnectors(i, row.depth, y, GROUP_H);
 
       const ix = MH + 4 + row.depth * INDENT;
-      const my = y + GROUP_H/2 + 2;
+      const lsz = row.depth === 0 ? 8.5 : row.depth === 1 ? 7.5 : 7;
+      const lbd = row.depth <= 1;
+      // Baseline that puts the glyph's visual middle exactly on the row centerline.
+      // pt→mm = 0.3528; cap-height ≈ 0.72 of font size; visual middle ≈ baseline - cap/2.
+      const my = y + GROUP_H / 2 + lsz * 0.3528 * 0.36;
       const arrowCol: readonly[number,number,number] = row.depth === 0 ? GOLD : MUTED;
-      // Filled triangle (▸) — drawn as a vector so it renders in every PDF font.
-      // Vertically centered on the row's geometric mid-line so it aligns with
-      // both the elbow connector and the label's visual baseline.
+      // Filled triangle (▸) — vector, centered on the row's mid-line so it
+      // lines up with both the elbow connector and the label.
       const aSize = row.depth === 0 ? 2.4 : 2.0;
       const aX = ix;
-      const aCy = y + GROUP_H / 2;            // row centerline
+      const aCy = y + GROUP_H / 2;
       pdf.setFillColor(arrowCol[0], arrowCol[1], arrowCol[2]);
       pdf.triangle(aX, aCy - aSize, aX, aCy + aSize, aX + aSize * 1.6, aCy, "F");
 
+      tx(row.label, ix + 5.5, my, lsz, TEXT, lbd);
 
-      const lsz = row.depth === 0 ? 8.5 : row.depth === 1 ? 7.5 : 7;
-      const lbd = row.depth <= 1;
-      tx(row.label, ix+5.5, my, lsz, TEXT, lbd);
 
       // Measure label width at same font/size used to draw it
       pdf.setFont(FONT, lbd ? "bold" : "normal"); pdf.setFontSize(lsz);
