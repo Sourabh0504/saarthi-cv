@@ -50,11 +50,8 @@ CACHE_TTL: int = int(os.getenv("CACHE_TTL", "900"))
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
 # Comma-separated list of allowed frontend origins.
-_raw_origins = os.getenv(
-    "ALLOWED_ORIGINS",
-    "http://localhost:5173,http://localhost:3000,http://localhost:8080",
-)
-ALLOWED_ORIGINS: list[str] = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+origins = os.getenv("ALLOWED_ORIGINS", "").split(",")
+ALLOWED_ORIGINS: list[str] = origins
 
 # ── Server ────────────────────────────────────────────────────────────────────
 API_HOST: str = os.getenv("API_HOST", "0.0.0.0")

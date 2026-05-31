@@ -31,7 +31,7 @@ from apps_script_connector import (
     fetch_data, fetch_raw_data, fetch_current_structure, close_http_client
 )
 from calculator import top_performers
-from config import ALLOWED_ORIGINS, get_apps_script_url
+from config import origins, get_apps_script_url
 
 
 # ── Lifespan: init DB, pre-warm cache, periodic refresh, clean shutdown ──────
@@ -115,7 +115,7 @@ app = FastAPI(
 # ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
