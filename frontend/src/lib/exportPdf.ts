@@ -1138,7 +1138,7 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
       drawVSep(y, GROUP_H);
       y += GROUP_H;
 
-    // Creative row (no thumbnail — pure typography, matches dashboard rhythm)
+    // Creative row (with thumbnail on the left)
     } else {
       fR(MH, y, CW, CREATIVE_H, CR_BG);
       ln(MH, y+CREATIVE_H, MH+CW, y+CREATIVE_H, BDR, 0.12);
@@ -1147,10 +1147,44 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
       const { creative, metrics, depth } = row;
       const ix = MH + 4 + depth * INDENT;
 
-      // Subtle leading accent so creative rows read as leaves of the tree
-      fR(ix - 2, y + 3, 0.6, CREATIVE_H - 6, BDR);
+      // Thumbnail slot (image, video poster, or typed placeholder)
+      const thumbX = ix;
+      const thumbY = y + (CREATIVE_H - THUMB_H) / 2;
+      const img = imgMap.get(creative.creative_id);
+      // Frame
+      fR(thumbX, thumbY, THUMB_W, THUMB_H, theme === "dark" ? [18,18,24] : [245,245,250]);
+      if (img) {
+        try {
+          pdf.addImage(img, "JPEG", thumbX, thumbY, THUMB_W, THUMB_H, undefined, "FAST");
+        } catch {
+          try { pdf.addImage(img, "PNG", thumbX, thumbY, THUMB_W, THUMB_H, undefined, "FAST"); } catch {}
+        }
+      } else if (creative.creative_type === "Text") {
+        // Text-ad style placeholder
+        fR(thumbX, thumbY, THUMB_W, THUMB_H, theme === "dark" ? [240,240,245] : [255,255,255]);
+        pdf.setDrawColor(BDR[0],BDR[1],BDR[2]); pdf.setLineWidth(0.15);
+        pdf.rect(thumbX, thumbY, THUMB_W, THUMB_H);
+        tx("Ad", thumbX+1.5, thumbY+3, 5, [66,133,244] as const, true);
+        const hl = (creative.headline || "").slice(0, 28);
+        pdf.setFont(FONT, "bold"); pdf.setFontSize(5.2);
+        pdf.setTextColor(26, 13, 171);
+        const hLines = (pdf.splitTextToSize(hl, THUMB_W - 3) as string[]).slice(0, 2);
+        pdf.text(hLines, thumbX+1.5, thumbY+6.5);
+      } else {
+        pdf.setDrawColor(BDR[0],BDR[1],BDR[2]); pdf.setLineWidth(0.15);
+        pdf.rect(thumbX, thumbY, THUMB_W, THUMB_H);
+        tx(creative.creative_type.toUpperCase(), thumbX + THUMB_W/2, thumbY + THUMB_H/2 + 1.5, 6, MUTED, true, "center");
+      }
+      // Type badge bottom-right of thumb
+      pdf.setFont(FONT, "bold"); pdf.setFontSize(4.8);
+      const badge = creative.creative_type.toUpperCase();
+      const bdW = pdf.getTextWidth(badge) + 2.4;
+      pdf.setFillColor(0, 0, 0);
+      pdf.rect(thumbX + THUMB_W - bdW - 0.6, thumbY + THUMB_H - 3.6, bdW, 3, "F");
+      pdf.setTextColor(255, 255, 255);
+      pdf.text(badge, thumbX + THUMB_W - bdW/2 - 0.6, thumbY + THUMB_H - 1.4, { align: "center" });
 
-      const textX = ix + 2;
+      const textX = thumbX + THUMB_W + 3;
       const textW = LABEL_W - (textX - MH) - 4;
 
       // Primary label — creative URL first (matches dashboard), then headline fallback
