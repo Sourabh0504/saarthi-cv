@@ -633,7 +633,7 @@ function Portal() {
       <SplashLoader visible={splashVisible} secs={loadingSecs} />
 
       {/* ── Header ── */}
-      <header className="app-header glass-strong border-b border-white/5 sticky top-0 z-30 no-print">
+      <header className="app-header border-b border-white/10 sticky top-0 z-30 no-print bg-background/95 backdrop-blur-xl shadow-[0_4px_20px_-8px_rgba(0,0,0,0.6)]">
         <div className="flex items-center gap-4 px-6 py-3">
           <Button
             variant="ghost" size="icon"
