@@ -20,6 +20,8 @@ interface Props {
   onCreativeClick?:  (creative: Creative) => void;
   sortBy?:           string | null;
   onSortByChange?:   (v: string | null) => void;
+  activeLevel?:      number;
+  onActiveLevelChange?: (level: number) => void;
   // Compare mode
   compareMode?:      boolean;
   compareMetrics?:   Map<string, ComputedMetrics>; // per creative_id
@@ -312,6 +314,8 @@ export function DirectoryTree({
   onCreativeClick,
   sortBy: sortByProp,
   onSortByChange,
+  activeLevel: activeLevelProp,
+  onActiveLevelChange,
   compareMode    = false,
   compareMetrics,
   compareTotals,
@@ -319,6 +323,9 @@ export function DirectoryTree({
   const [internalSortBy, setInternalSortBy] = useState<string | null>(null);
   const sortBy   = sortByProp ?? internalSortBy;
   const setSortBy = onSortByChange ?? setInternalSortBy;
+  const [internalActiveLevel, setInternalActiveLevel] = useState<number>(1);
+  const activeLevel = activeLevelProp ?? internalActiveLevel;
+  const setActiveLevel = onActiveLevelChange ?? setInternalActiveLevel;
 
   const tree       = useMemo(() => buildTree(rows, hierarchy, sortBy, compareMode ? compareMetrics : undefined), [rows, hierarchy, sortBy, compareMode, compareMetrics]);
   const grandTotal = useMemo(() => aggregate(rows), [rows]);
@@ -326,7 +333,6 @@ export function DirectoryTree({
 
   const [open, setOpen]           = useState<Set<string>>(new Set());
   const [hover, setHover]         = useState<HoverState | null>(null);
-  const [activeLevel, setActiveLevel] = useState<number>(1); // 0 = top only, 1 = +1 below, …
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Reset drill depth when hierarchy order changes
