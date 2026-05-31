@@ -1166,12 +1166,15 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
       const ix = MH + 4 + row.depth * INDENT;
       const my = y + GROUP_H/2 + 2;
       const arrowCol: readonly[number,number,number] = row.depth === 0 ? GOLD : MUTED;
-      // Filled triangle (▸) — drawn as vector so it renders in every PDF font
-      const aSize = row.depth === 0 ? 2.2 : 1.8;
+      // Filled triangle (▸) — drawn as a vector so it renders in every PDF font.
+      // Vertically centered on the row's geometric mid-line so it aligns with
+      // both the elbow connector and the label's visual baseline.
+      const aSize = row.depth === 0 ? 2.4 : 2.0;
       const aX = ix;
-      const aY = my - 2;
+      const aCy = y + GROUP_H / 2;            // row centerline
       pdf.setFillColor(arrowCol[0], arrowCol[1], arrowCol[2]);
-      pdf.triangle(aX, aY, aX, aY + aSize * 2, aX + aSize * 1.7, aY + aSize, "F");
+      pdf.triangle(aX, aCy - aSize, aX, aCy + aSize, aX + aSize * 1.6, aCy, "F");
+
 
       const lsz = row.depth === 0 ? 8.5 : row.depth === 1 ? 7.5 : 7;
       const lbd = row.depth <= 1;
