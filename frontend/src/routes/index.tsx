@@ -990,6 +990,7 @@ function Portal() {
         visibleRows={visibleRows}
         totals={totals}
         hierarchy={hierarchy}
+        activeLevel={directoryLevel}
       />
 
       <CreativeDetailModal
