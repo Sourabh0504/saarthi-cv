@@ -901,23 +901,33 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
   const effectiveH = Math.max(48, rowHeightPx || 96);
   const tH         = Math.max(20, Math.min(Math.round(effectiveH * PX_TO_MM * 0.90), 28));
   const CREATIVE_H = tH + 8;   // 4 mm padding top + 4 mm bottom
-  const GROUP_H    = 11;
-  const TOTAL_H    = 14;
-  const COL_H      = 10;
-  const FHD_H      = 32;
-  const FOOTER_H   = 12;
+  const GROUP_H    = 10;
+  const TOTAL_H    = 12;
+  const COL_H      = 9;
+  const FHD_H      = 24;
+  const FOOTER_H   = 10;
   const STRIPE_H   = 2.5;
-  const SUBSTRIPE_H = 1.2;
   // y where content rows begin
-  const START_Y    = STRIPE_H + SUBSTRIPE_H + FHD_H + COL_H + 3;
+  const START_Y    = STRIPE_H + FHD_H + COL_H + 2;
 
   // ── Compute total page height from row content ─────────────────────────────
   const contentH = tableRows.reduce((sum, row) =>
     sum + (row.kind === "total" ? TOTAL_H : row.kind === "group" ? GROUP_H : CREATIVE_H), 0);
   const PAGE_H = START_Y + contentH + FOOTER_H + MV;
 
-  // Thumbnails intentionally omitted — client-shareable reports render as
-  // pure typography + metrics, matching the dashboard's structural rhythm.
+  // ── Load thumbnail images in parallel (fonts already loaded above) ────────
+  const imgMap = new Map<string, HTMLImageElement | null>();
+  await Promise.allSettled(
+    tableRows
+      .filter((r): r is PdfTableRow & { kind: "creative" } => r.kind === "creative")
+      .slice(0, 300)
+      .map(async ({ creative }) => {
+        const ytId = creative.creative_type === "Video" ? getYouTubeId(creative.creative_url) : null;
+        const src  = creative.creative_type === "Image" ? creative.creative_url
+                   : ytId ? `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg` : null;
+        if (src) imgMap.set(creative.creative_id, await loadImage(src));
+      }),
+  );
 
   // ── Create single-page PDF with computed height ────────────────────────────
   const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: [PW, PAGE_H] });
@@ -988,14 +998,13 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
   // column-header bar
   const drawColHdr = (y: number) => {
     fR(MH, y, CW, COL_H, HDR);
+    // Subtle top border on the column header
     ln(MH, y, MH+CW, y, BDR, 0.15);
-    ln(MH, y+COL_H, MH+CW, y+COL_H, GOLD, 0.35);
-    // Breadcrumb of hierarchy
-    tx("HIERARCHY", MH+4, y+4, 5, MUTED, true);
-    tx([...hierarchyLabels, "Creative"].join("  ›  "), MH+4, y+8, 6.5, TEXT, true);
+    ln(MH, y+COL_H, MH+CW, y+COL_H, GOLD, 0.3);
+    tx([...hierarchyLabels, "Creative"].join("  ›  "), MH+4, y+6, 6, MUTED);
     for (let i = 0; i < enabledColumns.length; i++) {
       const key = enabledColumns[i];
-      tx(COL_ABBR[key]??key, MH+LABEL_W+i*(MCOL_W+MCOL_GAP)+MCOL_W, y+6.5, 6.2, GOLD, true, "right");
+      tx(COL_ABBR[key]??key, MH+LABEL_W+i*(MCOL_W+MCOL_GAP)+MCOL_W, y+6, 6, GOLD, true, "right");
     }
     drawVSep(y, COL_H);
   };
@@ -1008,53 +1017,33 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
     : [context.dateRange, context.dateRange];
 
   const drawHeader = () => {
-    // Top accent: gold hairline + onyx band
     fR(0, 0, PW, STRIPE_H, GOLD);
-    fR(0, STRIPE_H, PW, SUBSTRIPE_H, theme === "light" ? [232, 220, 180] : [38, 32, 16]);
-    fR(0, STRIPE_H + SUBSTRIPE_H, PW, FHD_H, HDR);
-    ln(0, STRIPE_H + SUBSTRIPE_H + FHD_H, PW, STRIPE_H + SUBSTRIPE_H + FHD_H, GOLD, 0.5);
-
-    const baseY = STRIPE_H + SUBSTRIPE_H;
-
-    // ── Left: wordmark + tagline ───────────────────────────────────────────
-    tx("CreativeVisibility", MH, baseY + 11, 16, GOLD, true, "left", true);
-    // Slim accent rule under the wordmark
-    fR(MH, baseY + 13.2, 22, 0.4, GOLD);
-    tx("Luxury Jewelry  ·  Campaign Performance Report",
-       MH, baseY + 18.5, 7, MUTED);
-
-    // ── Right: report period block ─────────────────────────────────────────
-    tx("REPORT PERIOD", PW - MH, baseY + 6.5, 5.5, MUTED, true, "right");
-    tx(safe(`${fd(si)}  →  ${fd(ei)}`), PW - MH, baseY + 12.5, 10, GOLD, true, "right", true);
-    const ts = new Date().toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
-    tx(`Generated ${ts}`, PW - MH, baseY + 17.5, 6, MUTED, false, "right");
-
-    // ── Bottom strip: filters · selection ──────────────────────────────────
-    const stripY = baseY + FHD_H - 7;
-    ln(MH, stripY - 2.5, MH + CW, stripY - 2.5, BDR, 0.15);
-    const filterStr = context.filterBits.length ? context.filterBits.join("   ·   ") : "All filters";
-    tx("FILTERS", MH, stripY + 1.5, 5, MUTED, true);
-    tx(filterStr, MH + 13, stripY + 1.5, 6, TEXT);
-    tx(context.selectionLabel, PW - MH, stripY + 1.5, 6.5, GOLD, true, "right");
+    fR(0, STRIPE_H, PW, FHD_H, HDR);
+    ln(0, STRIPE_H+FHD_H, PW, STRIPE_H+FHD_H, GOLD, 0.45);
+    tx("CreativeVisibility",                           MH,    STRIPE_H+9.5, 14, GOLD, true, "left", true);
+    tx("Luxury Jewelry · Campaign Performance Portal", MH,    STRIPE_H+15.5, 7, MUTED);
+    tx(safe(`${fd(si)}  →  ${fd(ei)}`),               PW-MH, STRIPE_H+9.5, 8.5, GOLD, true, "right");
+    const ts = new Date().toLocaleString("en-IN",{dateStyle:"medium",timeStyle:"short"});
+    tx(`Generated: ${ts}`,                            PW-MH, STRIPE_H+15.5, 6.5, MUTED, false, "right");
+    // Filter summary — left; selection scope — right
+    const filterStr = context.filterBits.length ? context.filterBits.join("  ·  ") : "All filters";
+    tx(filterStr,                                      MH,    STRIPE_H+21.5, 5.5, MUTED);
+    tx(context.selectionLabel,                         PW-MH, STRIPE_H+21.5, 6, GOLD, true, "right");
   };
 
   // footer (bottom of document — single occurrence)
   const drawFooter = () => {
-    const fy = PAGE_H - MV - FOOTER_H + 6;
-    // Top gold hairline + subtle border above the footer block
-    ln(MH, PAGE_H - MV - FOOTER_H, MH + CW, PAGE_H - MV - FOOTER_H, GOLD, 0.3);
-    ln(MH, PAGE_H - MV - FOOTER_H + 1.2, MH + CW, PAGE_H - MV - FOOTER_H + 1.2, BDR, 0.12);
-    tx("CreativeVisibility  ·  Confidential", MH, fy, 5.5, MUTED, true);
-    tx(safe(`${context.selectedCount} creatives  ·  ${fd(si)} → ${fd(ei)}`),
-       PW - MH, fy, 5.5, MUTED, false, "right");
-    tx("© 2026 CreativeVisibility. All rights reserved.",
-       PW / 2, fy, 5.5, MUTED, false, "center");
+    const fy = PAGE_H - MV - FOOTER_H + 5;
+    ln(MH, PAGE_H-MV-FOOTER_H, MH+CW, PAGE_H-MV-FOOTER_H, BDR, 0.2);
+    tx("CreativeVisibility  ·  Confidential",     MH,    fy, 5.5, MUTED);
+    tx(safe(`${context.selectedCount} creatives  ·  ${fd(si)} → ${fd(ei)}`), PW-MH, fy, 5.5, MUTED, false, "right");
+    tx("© 2026 CreativeVisibility. All rights reserved.", PW/2, fy, 5.5, MUTED, false, "center");
   };
 
   // ── Draw document ──────────────────────────────────────────────────────────
   fR(0, 0, PW, PAGE_H, BG);   // page background
   drawHeader();
-  drawColHdr(STRIPE_H + SUBSTRIPE_H + FHD_H);
+  drawColHdr(STRIPE_H + FHD_H);
   let y = START_Y;
 
   for (const row of tableRows) {
@@ -1121,7 +1110,7 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
       drawVSep(y, GROUP_H);
       y += GROUP_H;
 
-    // Creative row (no thumbnail — pure typography, matches dashboard rhythm)
+    // Creative row
     } else {
       fR(MH, y, CW, CREATIVE_H, CR_BG);
       ln(MH, y+CREATIVE_H, MH+CW, y+CREATIVE_H, BDR, 0.12);
@@ -1129,27 +1118,66 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
 
       const { creative, metrics, depth } = row;
       const ix = MH + 4 + depth * INDENT;
+      const tW = Math.min(tH * 1.55, 62);  // wider cell; image auto-sized inside
 
-      // Subtle leading accent so creative rows read as leaves of the tree
-      fR(ix - 2, y + 3, 0.6, CREATIVE_H - 6, BDR);
+      // Thumbnail card background
+      pdf.setFillColor(HDR[0],HDR[1],HDR[2]);
+      pdf.setDrawColor(BDR[0],BDR[1],BDR[2]); pdf.setLineWidth(0.15);
+      pdf.roundedRect(ix, y+3, tW, tH, 1.5, 1.5, "FD");
 
-      const textX = ix + 2;
-      const textW = LABEL_W - (textX - MH) - 4;
+      const img = imgMap.get(creative.creative_id);
+      if (img && img.naturalWidth > 0) {
+        const canvas = document.createElement("canvas");
+        const sc     = Math.min(1, 800/img.naturalWidth);
+        canvas.width  = img.naturalWidth  * sc;
+        canvas.height = img.naturalHeight * sc;
+        canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const ar = canvas.width / canvas.height;
+        let iw = tW-0.8, ih = iw/ar;
+        if (ih > tH-0.8) { ih = tH-0.8; iw = ih*ar; }
+        const imgX = ix + (tW-iw)/2;
+        const imgY = y + 3 + (tH-ih)/2;
+        pdf.addImage(canvas.toDataURL("image/jpeg",0.88),"JPEG",imgX,imgY,iw,ih);
 
-      // Primary label — creative URL first (matches dashboard), then headline fallback
-      const primary = creative.creative_url
-        ? creative.creative_url.replace(/^https?:\/\//, "")
-        : (creative.headline || creative.creative_id);
-      pdf.setFont(FONT, "bold"); pdf.setFontSize(7.2);
-      const nameLines = (pdf.splitTextToSize(primary, textW) as string[]).slice(0, 2);
+        // Video play button overlay
+        if (creative.creative_type === "Video") {
+          const cx = imgX + iw/2;
+          const cy = imgY + ih/2;
+          const r  = Math.min(ih * 0.2, 4.5);
+          pdf.setFillColor(255,255,255);
+          pdf.setDrawColor(200,200,200);
+          pdf.setLineWidth(0.15);
+          pdf.circle(cx, cy, r, "FD");
+          // Play glyph
+          pdf.setFont(FONT,"bold"); pdf.setFontSize(r * 2.6);
+          pdf.setTextColor(40,40,40);
+          pdf.text("▶", cx + r*0.06, cy + r*0.42, { align: "center" });
+        }
+      } else if (creative.creative_type === "Text") {
+        tx("AD", ix+2.5, y+5, 5.5, MUTED, true);
+        if (creative.headline) {
+          pdf.setFont(FONT,"bold"); pdf.setFontSize(6);
+          pdf.setTextColor(GOLD[0],GOLD[1],GOLD[2]);
+          pdf.text((pdf.splitTextToSize(creative.headline, tW-5) as string[]).slice(0,2), ix+2.5, y+9);
+        }
+      }
+
+      const textX = ix + tW + 3;
+      const textW = MH + LABEL_W - textX - 2;
+
+      // Creative name — 2 lines, bold
+      const name = creative.headline || creative.creative_url.replace(/^https?:\/\//,"").slice(0,70);
+      pdf.setFont(FONT,"bold"); pdf.setFontSize(7);
+      const nameLines = (pdf.splitTextToSize(name, textW) as string[]).slice(0,2);
+      // Center the (name lines + tags) block vertically in the row
       const approxBlockH = nameLines.length * 3.2 + 7.5;
       const nameTopY = y + Math.max(4, (CREATIVE_H - approxBlockH) / 2 + 3.2);
-      pdf.setTextColor(TEXT[0], TEXT[1], TEXT[2]);
+      pdf.setTextColor(TEXT[0],TEXT[1],TEXT[2]);
       pdf.text(nameLines, textX, nameTopY);
 
-      // Tags row below label
+      // Tags row below name
       const tags = [creative.creative_type, creative.city, creative.funnel, creative.category]
-        .filter(Boolean).slice(0, 4);
+        .filter(Boolean).slice(0,4);
       let tagX = textX;
       const tagY = nameTopY + nameLines.length * 3.2 + 1.8;
       pdf.setFontSize(5.5);
