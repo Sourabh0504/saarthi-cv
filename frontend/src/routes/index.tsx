@@ -733,7 +733,7 @@ function Portal() {
           )}
 
           {/* ── Sticky filter + KPI strip ── */}
-          <div className="sticky top-[60px] z-20 -mx-6 px-6 pt-1 pb-3 backdrop-blur-xl bg-background/70 border-b border-white/5 space-y-3 no-print">
+          <div className="sticky top-[60px] z-20 -mx-6 px-6 pt-2 pb-3 backdrop-blur-2xl bg-background/95 border-b border-white/10 shadow-[0_8px_24px_-12px_rgba(0,0,0,0.6)] space-y-3 no-print">
             <FilterPanel
               filters={filters}
               setFilters={setFiltersSafe}
