@@ -1099,7 +1099,7 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
       drawVSep(y, GROUP_H);
       y += GROUP_H;
 
-    // Creative row
+    // Creative row (no thumbnail — pure typography, matches dashboard rhythm)
     } else {
       fR(MH, y, CW, CREATIVE_H, CR_BG);
       ln(MH, y+CREATIVE_H, MH+CW, y+CREATIVE_H, BDR, 0.12);
@@ -1107,66 +1107,27 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
 
       const { creative, metrics, depth } = row;
       const ix = MH + 4 + depth * INDENT;
-      const tW = Math.min(tH * 1.55, 62);  // wider cell; image auto-sized inside
 
-      // Thumbnail card background
-      pdf.setFillColor(HDR[0],HDR[1],HDR[2]);
-      pdf.setDrawColor(BDR[0],BDR[1],BDR[2]); pdf.setLineWidth(0.15);
-      pdf.roundedRect(ix, y+3, tW, tH, 1.5, 1.5, "FD");
+      // Subtle leading accent so creative rows read as leaves of the tree
+      fR(ix - 2, y + 3, 0.6, CREATIVE_H - 6, BDR);
 
-      const img = imgMap.get(creative.creative_id);
-      if (img && img.naturalWidth > 0) {
-        const canvas = document.createElement("canvas");
-        const sc     = Math.min(1, 800/img.naturalWidth);
-        canvas.width  = img.naturalWidth  * sc;
-        canvas.height = img.naturalHeight * sc;
-        canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
-        const ar = canvas.width / canvas.height;
-        let iw = tW-0.8, ih = iw/ar;
-        if (ih > tH-0.8) { ih = tH-0.8; iw = ih*ar; }
-        const imgX = ix + (tW-iw)/2;
-        const imgY = y + 3 + (tH-ih)/2;
-        pdf.addImage(canvas.toDataURL("image/jpeg",0.88),"JPEG",imgX,imgY,iw,ih);
+      const textX = ix + 2;
+      const textW = LABEL_W - (textX - MH) - 4;
 
-        // Video play button overlay
-        if (creative.creative_type === "Video") {
-          const cx = imgX + iw/2;
-          const cy = imgY + ih/2;
-          const r  = Math.min(ih * 0.2, 4.5);
-          pdf.setFillColor(255,255,255);
-          pdf.setDrawColor(200,200,200);
-          pdf.setLineWidth(0.15);
-          pdf.circle(cx, cy, r, "FD");
-          // Play glyph
-          pdf.setFont(FONT,"bold"); pdf.setFontSize(r * 2.6);
-          pdf.setTextColor(40,40,40);
-          pdf.text("▶", cx + r*0.06, cy + r*0.42, { align: "center" });
-        }
-      } else if (creative.creative_type === "Text") {
-        tx("AD", ix+2.5, y+5, 5.5, MUTED, true);
-        if (creative.headline) {
-          pdf.setFont(FONT,"bold"); pdf.setFontSize(6);
-          pdf.setTextColor(GOLD[0],GOLD[1],GOLD[2]);
-          pdf.text((pdf.splitTextToSize(creative.headline, tW-5) as string[]).slice(0,2), ix+2.5, y+9);
-        }
-      }
-
-      const textX = ix + tW + 3;
-      const textW = MH + LABEL_W - textX - 2;
-
-      // Creative name — 2 lines, bold
-      const name = creative.headline || creative.creative_url.replace(/^https?:\/\//,"").slice(0,70);
-      pdf.setFont(FONT,"bold"); pdf.setFontSize(7);
-      const nameLines = (pdf.splitTextToSize(name, textW) as string[]).slice(0,2);
-      // Center the (name lines + tags) block vertically in the row
+      // Primary label — creative URL first (matches dashboard), then headline fallback
+      const primary = creative.creative_url
+        ? creative.creative_url.replace(/^https?:\/\//, "")
+        : (creative.headline || creative.creative_id);
+      pdf.setFont(FONT, "bold"); pdf.setFontSize(7.2);
+      const nameLines = (pdf.splitTextToSize(primary, textW) as string[]).slice(0, 2);
       const approxBlockH = nameLines.length * 3.2 + 7.5;
       const nameTopY = y + Math.max(4, (CREATIVE_H - approxBlockH) / 2 + 3.2);
-      pdf.setTextColor(TEXT[0],TEXT[1],TEXT[2]);
+      pdf.setTextColor(TEXT[0], TEXT[1], TEXT[2]);
       pdf.text(nameLines, textX, nameTopY);
 
-      // Tags row below name
+      // Tags row below label
       const tags = [creative.creative_type, creative.city, creative.funnel, creative.category]
-        .filter(Boolean).slice(0,4);
+        .filter(Boolean).slice(0, 4);
       let tagX = textX;
       const tagY = nameTopY + nameLines.length * 3.2 + 1.8;
       pdf.setFontSize(5.5);
