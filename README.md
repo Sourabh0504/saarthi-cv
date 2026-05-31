@@ -4,7 +4,7 @@ This document provides step-by-step instructions to get both the Python FastAPI 
 
 ## Prerequisites
 - **Node.js**: v20.19.0 or higher (v22 LTS recommended)
-- **Python**: v3.10 or higher
+- **Python**: v3.10 or higher.
 - **Git**: (Optional) for version control.
 
 ---
