@@ -1196,6 +1196,10 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
       drawVSep(y, CREATIVE_H);
 
       const { creative, metrics, depth } = row;
+
+      // Tree connectors (├─ │ └─) for creative rows too
+      drawTreeConnectors(i, depth, y, CREATIVE_H);
+
       const ix = MH + 4 + depth * INDENT;
 
       // Thumbnail slot (image, video poster, or typed placeholder)
