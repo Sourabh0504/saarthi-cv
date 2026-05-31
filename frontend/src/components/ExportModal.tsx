@@ -20,9 +20,10 @@ export interface ExportContext {
 }
 
 export interface ExportPick {
-  theme:     "light" | "dark";
-  scope:     "current" | "all";
-  rowHeight: number | null;
+  theme:            "light" | "dark";
+  scope:            "current" | "all";
+  rowHeight:        number | null;
+  includeCreatives: boolean;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
