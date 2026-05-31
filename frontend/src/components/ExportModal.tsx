@@ -138,7 +138,7 @@ function MetricCells({ metrics, keys, C, size = 7, bold = false, goldCost = fals
 // ── Table preview pane (HTML mockup matching the PDF structure) ────────────────
 
 function TablePreviewPane({
-  visibleRows, totals, context, hierarchy, theme, effectiveDensity,
+  visibleRows, totals, context, hierarchy, theme, effectiveDensity, activeLevel,
 }: {
   visibleRows:       Array<{ creative: Creative; metrics: ComputedMetrics }>;
   totals:            ComputedMetrics;
@@ -146,15 +146,17 @@ function TablePreviewPane({
   hierarchy:         Dim[];
   theme:             "dark" | "light";
   effectiveDensity:  number;
+  activeLevel:       number;
 }) {
   const C = PALETTES[theme];
   const cols = context.columnKeys.slice(0, 5);
   const thumbH = Math.max(22, Math.min(Math.round(effectiveDensity * 0.37), 58));
   const thumbW = Math.min(thumbH * 1.7, 90);
 
-  // Build a 2-level preview tree: top group + first creative per group
+  // Build a preview of the current export depth, matching the dashboard drill level.
   const firstDim = hierarchy[0];
   const getVal   = firstDim ? DIM_META[firstDim].get : null;
+  const includeCreativePreview = activeLevel >= hierarchy.length;
 
   const previewGroups = useMemo(() => {
     if (!getVal || !visibleRows.length) return [];
@@ -183,7 +185,8 @@ function TablePreviewPane({
       }));
   }, [visibleRows, getVal]);
 
-  const breadcrumb = [...hierarchy.map(d => DIM_META[d].label), "Creative"].join(" · ");
+  const visibleHierarchy = includeCreativePreview ? hierarchy : hierarchy.slice(0, Math.min(activeLevel + 1, hierarchy.length));
+  const breadcrumb = [...visibleHierarchy.map(d => DIM_META[d].label), ...(includeCreativePreview ? ["Creative"] : [])].join(" · ");
 
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const fmtDate = (iso: string) => { const [y, m, d] = iso.split("-"); return `${+d} ${MONTHS[+m-1]} ${y}`; };
@@ -279,8 +282,8 @@ function TablePreviewPane({
               <MetricCells metrics={group.metrics} keys={cols} C={C} size={7} bold />
             </div>
 
-            {/* First creative row */}
-            {creative && (
+            {/* First creative row — only when the dashboard is expanded to Creative */}
+            {includeCreativePreview && creative && (
               <div style={{
                 display: "flex", alignItems: "center",
                 background: C.creativeBg, padding: `5px 12px 5px ${12 + 14}px`,
@@ -341,11 +344,12 @@ interface Props {
   visibleRows: Array<{ creative: Creative; metrics: ComputedMetrics }>;
   totals:      ComputedMetrics;
   hierarchy:   Dim[];
+  activeLevel: number;
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
-export function ExportModal({ open, onClose, onPick, context, visibleRows, totals, hierarchy }: Props) {
+export function ExportModal({ open, onClose, onPick, context, visibleRows, totals, hierarchy, activeLevel }: Props) {
   const [scope, setScope]               = useState<"current" | "all">("current");
   const [density, setDensity]           = useState<number | null>(null);
   const [previewTheme, setPreviewTheme] = useState<"dark" | "light">("dark");
@@ -506,6 +510,7 @@ export function ExportModal({ open, onClose, onPick, context, visibleRows, total
                   hierarchy={hierarchy}
                   theme={liveTheme}
                   effectiveDensity={effectiveDensity}
+                  activeLevel={activeLevel}
                 />
               </div>
 
