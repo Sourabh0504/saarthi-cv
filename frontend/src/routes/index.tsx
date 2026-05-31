@@ -13,7 +13,7 @@ import {
   type Creative, type FilterOptions, type RawDailyRow, type CreativeDimensionMap,
 } from "@/lib/api";
 import { idbClear } from "@/lib/idb";
-import { exportDashboardPdf } from "@/lib/exportPdf";
+import { exportDashboardPdf, type PdfTableRow } from "@/lib/exportPdf";
 
 // ── Lib ───────────────────────────────────────────────────────────────────────
 import { aggregateByDateRange, deriveFilterOptions as deriveFO, sortDailyRows } from "@/lib/aggregator";
@@ -69,6 +69,58 @@ const COL_LABELS: Record<string, string> = {
   cpa: "CPA",
   share_pct: "% Share",
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Build flat PDF table rows from the current hierarchy (for exportDashboardPdf)
+// ─────────────────────────────────────────────────────────────────────────────
+function buildPdfTableRows(
+  rows:     Array<{ creative: Creative; metrics: ComputedMetrics }>,
+  hierarchy: Dim[],
+  totals:   ComputedMetrics,
+): PdfTableRow[] {
+  const result: PdfTableRow[] = [{ kind: "total", count: rows.length, metrics: totals }];
+
+  const recurse = (items: typeof rows, dims: Dim[], depth: number) => {
+    if (dims.length === 0 || items.length === 0) {
+      for (const item of items) {
+        result.push({ kind: "creative", creative: item.creative, metrics: item.metrics, depth });
+      }
+      return;
+    }
+    const [dim, ...rest] = dims;
+    const getVal = DIM_META[dim].get;
+    const groups = new Map<string, typeof rows>();
+    for (const item of items) {
+      const key = getVal(item.creative) || "—";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(item);
+    }
+    // sort groups by cost desc
+    const sorted = [...groups.entries()].sort(
+      ([, a], [, b]) =>
+        b.reduce((s, r) => s + r.metrics.cost, 0) -
+        a.reduce((s, r) => s + r.metrics.cost, 0),
+    );
+    for (const [label, group] of sorted) {
+      const gm = computeMetrics(
+        group.reduce(
+          (acc, r) => ({
+            impressions: acc.impressions + r.metrics.impressions,
+            clicks:      acc.clicks      + r.metrics.clicks,
+            cost:        acc.cost        + r.metrics.cost,
+            conversions: acc.conversions + r.metrics.conversions,
+          }),
+          { impressions: 0, clicks: 0, cost: 0, conversions: 0 },
+        ),
+      );
+      result.push({ kind: "group", label, dimLabel: DIM_META[dim].label, depth, count: group.length, metrics: gm });
+      recurse(group, rest, depth + 1);
+    }
+  };
+
+  recurse(rows, hierarchy, 0);
+  return result;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Portal Component
@@ -519,14 +571,15 @@ function Portal() {
 
     const enabledCols = Object.entries(columns).filter(([, v]) => v).map(([k]) => k);
 
+    const tableRows = buildPdfTableRows(exportRows, hierarchy, exportTotals);
+
     try {
       await exportDashboardPdf({
-        rows:           exportRows,
-        totals:         exportTotals,
-        enabledColumns: enabledCols,
+        tableRows,
+        enabledColumns:  enabledCols,
+        hierarchyLabels: hierarchy.map(d => DIM_META[d].label),
         context: {
           dateRange:      dateRangeLabel,
-          modeLabel:      mode === "structure" ? "Structure" : "Report",
           selectionLabel: scope === "all" ? "All creatives" : selectionLabel,
           selectedCount:  exportRows.length,
           totalCount:     creatives.length,
@@ -887,6 +940,7 @@ function Portal() {
         context={exportContext}
         visibleRows={visibleRows}
         totals={totals}
+        hierarchy={hierarchy}
       />
 
       <CreativeDetailModal

@@ -16,6 +16,16 @@ All notable changes to the **CreativeVisibility** project will be documented in 
 - [workflow.md](file:///d:/CreativeVisibility/workflow.md): Completely restructured into a 17-section, indexed master specification — covering executive summary, problem statement, campaign hierarchy, full technology stack, directory map, data architecture (SQLite schema + SQL queries), Google Sheets schema, FastAPI routes, React component tree, CSS design tokens, all feature specs, performance formulas, export engine (PDF/CSV), 10 edge case guardrails, 7-phase QA checklist, subagent reference, and a complete decision history log.
 - [agents/ads_agent.md](file:///d:/CreativeVisibility/agents/ads_agent.md): Expanded into an encyclopedic 13-section Google Ads reference covering all campaign types, bidding strategies, audience signals, asset specs, formulas, benchmarks, and 10 operational mandates.
 
+## [Unreleased] - 2026-05-30 (Session 3)
+
+### Changed (complete rethink — table layout)
+- [frontend/src/lib/exportPdf.ts](file:///d:/CreativeVisibility/frontend/src/lib/exportPdf.ts): `exportDashboardPdf` completely rewritten. Now outputs landscape A4 multi-page PDF that exactly mirrors the DirectoryTree table: hierarchy group rows (depth-coded backgrounds + colored left-border accent per level) indented 4mm per level, creative rows with inline thumbnails, right-aligned metric columns, TOTAL row with gold accent, column headers repeated on every page, "Page N of M" footer. No card containers.
+- [frontend/src/components/ExportModal.tsx](file:///d:/CreativeVisibility/frontend/src/components/ExportModal.tsx): PDF preview pane rebuilt as a table mockup (column headers, TOTAL row, group rows, creative rows with thumbnails) matching the new PDF structure. Accepts `hierarchy: Dim[]` prop for building the mini preview tree. Removed old card-container preview.
+- [frontend/src/routes/index.tsx](file:///d:/CreativeVisibility/frontend/src/routes/index.tsx): Added `buildPdfTableRows()` — recursively groups `visibleRows` by current hierarchy (sorted by cost desc), produces flat `PdfTableRow[]` array with proper depth levels. `handleExportPDF` now passes `tableRows` + `hierarchyLabels` to `exportDashboardPdf`. `ExportModal` receives `hierarchy` prop.
+
+### Added
+- [frontend/src/lib/exportPdf.ts](file:///d:/CreativeVisibility/frontend/src/lib/exportPdf.ts): `PdfTableRow` type (total | group | creative) exported for use in index.tsx.
+
 ## [Unreleased] - 2026-05-30 (Session 2)
 
 ### Added

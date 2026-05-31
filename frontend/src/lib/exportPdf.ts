@@ -29,16 +29,15 @@ const WHITE  = [240, 240, 245] as const;
 const BORDER = [45,  46,  58]  as const;
 
 // ── Font loader — fetches a TTF from CDN and base64-encodes it ───────────────
-// Each font is cached in module scope after first load.
-type FontCache = string | null | "failed";
-const _fontCache: Record<string, FontCache> = {};
+// Cache is per-URL; "failed" state is intentionally NOT cached so transient
+// network errors don't permanently block subsequent exports in the same session.
+const _fontCache: Record<string, string> = {};
 
 async function loadFontB64(url: string): Promise<string | null> {
-  if (_fontCache[url] === "failed") return null;
-  if (_fontCache[url])              return _fontCache[url] as string;
+  if (_fontCache[url]) return _fontCache[url];
   try {
     const r = await fetch(url, { cache: "force-cache" });
-    if (!r.ok) throw new Error("font fetch failed");
+    if (!r.ok) throw new Error(`font fetch ${r.status}`);
     const bytes = new Uint8Array(await r.arrayBuffer());
     const chunk = 0x8000;
     let b = "";
@@ -46,10 +45,9 @@ async function loadFontB64(url: string): Promise<string | null> {
       b += String.fromCharCode(...(bytes.subarray(i, Math.min(i + chunk, bytes.length)) as unknown as number[]));
     }
     _fontCache[url] = btoa(b);
-    return _fontCache[url] as string;
+    return _fontCache[url];
   } catch {
-    _fontCache[url] = "failed";
-    return null;
+    return null;   // don't cache failures — allow retry on next export
   }
 }
 
@@ -65,8 +63,18 @@ async function loadPdfFonts() {
 }
 
 // ── Noto Sans — supports ₹ and full Unicode ───────────────────────────────────
+// Google restructured their fonts repo; NotoSans-Regular.ttf is now under
+// the googlefonts/noto-fonts repo. Try that first, then the legacy path.
 async function loadNotoSans(): Promise<string | null> {
-  return loadFontB64(`${CDN}/notosans/NotoSans-Regular.ttf`);
+  const candidates = [
+    "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Regular.ttf",
+    `${CDN}/notosans/NotoSans-Regular.ttf`,
+  ];
+  for (const url of candidates) {
+    const r = await loadFontB64(url);
+    if (r) return r;
+  }
+  return null;
 }
 
 // ── Layout constants (mm) ─────────────────────────────────────────────────────
@@ -319,6 +327,16 @@ export async function exportCreativePdf(data: CreativePdfData): Promise<void> {
   // Load Unicode font (enables native ₹ rendering)
   const notoB64 = await loadNotoSans();
 
+  // When NotoSans is unavailable fall back to ASCII-safe representations so the
+  // PDF is always readable — ₹ → "Rs.", → → "-", and any remaining non-Latin
+  // chars are stripped. Applied only to display strings, not metadata.
+  const safe = notoB64
+    ? (s: string) => s
+    : (s: string) => s
+        .replace(/₹/g, "Rs.")
+        .replace(/→/g, "-")
+        .replace(/[^ -ÿ]/g, "");
+
   const { creative, totals, avgs, ctrDelta, cpcDelta, startDate, endDate, chartEls } = data;
 
   // ── Date formatter: YYYY-MM-DD → DD-MMM-YYYY (e.g. 30-May-2026) ──────────
@@ -369,10 +387,10 @@ export async function exportCreativePdf(data: CreativePdfData): Promise<void> {
   const ALL_METRIC_CELLS: Array<MetricCell & { key: string }> = [
     { key: "impressions", label: "Impressions", value: fmtNum(totals.impressions) },
     { key: "clicks",      label: "Clicks",      value: fmtNum(totals.clicks) },
-    { key: "cost",        label: "Spend",       value: fmtINR0(totals.cost), accent: true },
+    { key: "cost",        label: "Spend",       value: safe(fmtINR0(totals.cost)), accent: true },
     { key: "ctr",         label: "CTR",         value: fmtPct(totals.ctr),                         sub: ctrDeltaStr },
-    { key: "cpc",         label: "CPC",         value: fmtINR(totals.cpc),    sub: cpcDeltaStr },
-    { key: "cpm",         label: "CPM",         value: fmtINR(totals.cpm) },
+    { key: "cpc",         label: "CPC",         value: safe(fmtINR(totals.cpc)),    sub: cpcDeltaStr },
+    { key: "cpm",         label: "CPM",         value: safe(fmtINR(totals.cpm)) },
     { key: "conversions", label: "Conversions", value: totals.conversions.toFixed(1) },
     { key: "cr",          label: "Conv. Rate",  value: fmtPct(totals.cr) },
   ];
@@ -495,7 +513,7 @@ export async function exportCreativePdf(data: CreativePdfData): Promise<void> {
   text("Luxury Jewelry · Campaign Performance Portal", MARGIN, logoY + 6, 8, MUTED);
 
   // Date range (right-aligned)
-  const dr = `${startFmt}  →  ${endFmt}`;
+  const dr = safe(`${startFmt}  →  ${endFmt}`);
   text(dr, PAGE_W - MARGIN, logoY, 8, GOLD, "bold", "right");
 
   // Timestamp
@@ -793,406 +811,403 @@ export async function exportCreativePdf(data: CreativePdfData): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Dashboard Performance Report PDF
-// Draws the full creative performance table using jsPDF (no screenshots).
-// Every element is a real PDF object — selectable text, vector borders, crisp
-// metric tiles.  Architecture matches exportCreativePdf above.
+// Dashboard Performance Report PDF  (landscape A4, table layout)
+//
+// Mirrors the DirectoryTree exactly:
+//   • Landscape A4 — more room for metric columns
+//   • Multi-page — column headers repeat on every page
+//   • Group rows — one per hierarchy level (city → funnel → type → campaign → adgroup)
+//     indented 4 mm per level, depth-coded background
+//   • Creative rows — thumbnail inline + name/tags + right-aligned metric values
+//   • NO card containers — pure rows and columns, same as the dashboard
 // ─────────────────────────────────────────────────────────────────────────────
 
+
+
+// ── Row types for the dashboard table PDF ─────────────────────────────────────
+export type PdfTableRow =
+  | { kind: "total";    count: number;  metrics: ComputedMetrics }
+  | { kind: "group";    label: string;  dimLabel: string; depth: number; count: number; metrics: ComputedMetrics }
+  | { kind: "creative"; creative: Creative; metrics: ComputedMetrics; depth: number };
+
 export interface DashboardPdfData {
-  rows:          Array<{ creative: Creative; metrics: ComputedMetrics }>;
-  totals:        ComputedMetrics;
-  enabledColumns: string[];   // ordered list of column keys to render
+  tableRows:       PdfTableRow[];
+  enabledColumns:  string[];
+  hierarchyLabels: string[];   // e.g. ["Location","Funnel","Type","Campaign","Ad Group"]
   context: {
     dateRange:      string;
-    modeLabel:      string;
     selectionLabel: string;
     selectedCount:  number;
     totalCount:     number;
-    filterBits:     string[];   // pre-built ["Status: All", "City: Mumbai", …]
+    filterBits:     string[];
     columnsLabel:   string;
   };
-  rowHeightPx: number;   // dashboard density setting in px
+  rowHeightPx: number;
   theme:       "light" | "dark";
 }
 
+
 export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> {
   const { jsPDF } = await import("jspdf");
-  await import("svg2pdf.js");
 
-  const { rows, totals, enabledColumns, context, rowHeightPx, theme } = data;
+  const { tableRows, enabledColumns, hierarchyLabels, context, rowHeightPx, theme } = data;
 
-  // ── Brand colors — both themes ─────────────────────────────────────────────
+  // ── Load fonts ─────────────────────────────────────────────────────────────
+  // Poppins + Montserrat don't include ₹ — also try NotoSans as a unicode fallback.
+  // If all fail, use ASCII fallbacks via safe().
+  const [fonts, notoB64Dash] = await Promise.all([loadPdfFonts(), loadNotoSans()]);
+  const hasCurrency = !!notoB64Dash;
+  const safe = hasCurrency
+    ? (s: string) => s
+    : (s: string) => s.replace(/₹/g, "Rs.").replace(/→/g, "-").replace(/[^ -ÿ]/g, "");
+
+  // ── Colors ─────────────────────────────────────────────────────────────────
   const GOLD   = [200, 163, 80]  as const;
-  const GOLD_D = [100,  80, 30]  as const;   // dimmed gold for accent borders
+  const BG     = theme === "light" ? [255, 255, 255] as const : [10,  11,  15]  as const;
+  const HDR    = theme === "light" ? [248, 246, 240] as const : [18,  18,  24]  as const;
+  const TEXT   = theme === "light" ? [20,  20,  38]  as const : [240, 240, 245] as const;
+  const MUTED  = theme === "light" ? [120, 120, 140] as const : [120, 122, 140] as const;
+  const BDR    = theme === "light" ? [210, 212, 225] as const : [40,  42,  56]  as const;
+  const TOT_BG = theme === "light" ? [255, 252, 236] as const : [28,  22,  8]   as const;
+  const TOT_BD = theme === "light" ? [200, 155, 60]  as const : [120, 95,  38]  as const;
+  const CR_BG  = theme === "light" ? [255, 255, 255] as const : [12,  12,  17]  as const;
 
-  // surface colors flip per theme
-  const PAGE_BG  = theme === "light" ? [255, 255, 255] as const : [10,  11,  15]  as const;
-  const HEADER   = theme === "light" ? [248, 246, 240] as const : [18,  18,  24]  as const;
-  const MUTED    = theme === "light" ? [130, 130, 148] as const : [120, 122, 140] as const;
-  const TEXT     = theme === "light" ? [20,  20,  38]  as const : [240, 240, 245] as const;
-  const BORDER   = theme === "light" ? [210, 212, 225] as const : [45,  46,  58]  as const;
-  const TILE_BG  = theme === "light" ? [238, 238, 248] as const : [26,  26,  40]  as const;
-  const ROW_BG   = theme === "light" ? [248, 248, 252] as const : [15,  15,  20]  as const;
-  const COST_BG  = theme === "light" ? [253, 248, 236] as const : [28,  22,   8]  as const;
+  const GBG: Array<readonly [number, number, number]> = theme === "light"
+    ? [[225,225,245],[232,232,248],[238,238,251],[243,243,253],[247,247,255]]
+    : [[22,21,30],[17,17,23],[14,14,19],[12,12,16],[11,11,14]];
 
-  const STATUS_ON  = [52,  211, 153] as const;
-  const STATUS_OFF = [248, 113, 113] as const;
-  const TEAL       = [61,  191, 158] as const;
+  const DCLR: Array<readonly [number, number, number]> = [
+    [200, 163,  80],
+    [ 61, 191, 158],
+    [120, 140, 240],
+    [200, 100, 100],
+    [160, 120, 200],
+  ];
 
-  // ── Date formatter ─────────────────────────────────────────────────────────
-  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const fmtDate = (iso: string) => {
-    const [y, m, d] = iso.split("-");
-    return `${+d}-${MONTHS[+m - 1]}-${y}`;
-  };
-  const [startIso, endIso] = context.dateRange.includes(" to ")
-    ? context.dateRange.split(" to ")
-    : [context.dateRange, context.dateRange];
-  const startFmt = fmtDate(startIso);
-  const endFmt   = fmtDate(endIso);
+  // ── Page layout — auto-height, 297mm wide ─────────────────────────────────
+  const PW = 297;
+  const MH = 11, MV = 10;
+  const CW = PW - MH * 2;   // 275 mm
 
-  // ── Load fonts in parallel with images ────────────────────────────────────
-  const fontsPromise = loadPdfFonts();
+  const N        = Math.max(1, enabledColumns.length);
+  const MCOL_W   = Math.max(20, Math.min(28, (CW * 0.46) / N));
+  const MCOL_GAP = 2;
+  const MCW      = N * MCOL_W + (N - 1) * MCOL_GAP;
+  const LABEL_W  = CW - MCW;
 
-  // ── Load all creative images in parallel (JPEG thumbs for both image & video) ──
+  const INDENT     = 5;
+  // 1 CSS px at 96 dpi = 0.265 mm; use 90% of that so rows are slightly tighter than screen
+  const PX_TO_MM   = 0.265;
+  const effectiveH = Math.max(48, rowHeightPx || 96);
+  const tH         = Math.max(20, Math.min(Math.round(effectiveH * PX_TO_MM * 0.90), 28));
+  const CREATIVE_H = tH + 8;   // 4 mm padding top + 4 mm bottom
+  const GROUP_H    = 10;
+  const TOTAL_H    = 12;
+  const COL_H      = 9;
+  const FHD_H      = 24;
+  const FOOTER_H   = 10;
+  const STRIPE_H   = 2.5;
+  // y where content rows begin
+  const START_Y    = STRIPE_H + FHD_H + COL_H + 2;
+
+  // ── Compute total page height from row content ─────────────────────────────
+  const contentH = tableRows.reduce((sum, row) =>
+    sum + (row.kind === "total" ? TOTAL_H : row.kind === "group" ? GROUP_H : CREATIVE_H), 0);
+  const PAGE_H = START_Y + contentH + FOOTER_H + MV;
+
+  // ── Load thumbnail images in parallel (fonts already loaded above) ────────
   const imgMap = new Map<string, HTMLImageElement | null>();
   await Promise.allSettled(
-    rows.map(async ({ creative }) => {
-      const ytId = creative.creative_type === "Video" ? getYouTubeId(creative.creative_url) : null;
-      const src  = creative.creative_type === "Image" ? creative.creative_url
-                 : ytId                               ? `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`
-                 : null;
-      if (src) {
-        const img = await loadImage(src);
-        imgMap.set(creative.creative_id, img);
-      }
-    }),
+    tableRows
+      .filter((r): r is PdfTableRow & { kind: "creative" } => r.kind === "creative")
+      .slice(0, 300)
+      .map(async ({ creative }) => {
+        const ytId = creative.creative_type === "Video" ? getYouTubeId(creative.creative_url) : null;
+        const src  = creative.creative_type === "Image" ? creative.creative_url
+                   : ytId ? `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg` : null;
+        if (src) imgMap.set(creative.creative_id, await loadImage(src));
+      }),
   );
 
-  const fonts = await fontsPromise;
+  // ── Create single-page PDF with computed height ────────────────────────────
+  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: [PW, PAGE_H] });
 
-  // ── Page / layout constants (mm) ──────────────────────────────────────────
-  const PW       = 210;
-  const MARGIN   = 14;
-  const CW       = PW - MARGIN * 2;   // 182
-
-  const STRIPE_H  = 2.5;
-  const HEADER_H  = 26;
-  const SGAP      = 5;    // generic section gap
-  const CONTEXT_H = 20;   // filter + columns meta strip
-  const DIVIDER   = 2;
-
-  // KPI summary strip
-  const KPI_COLS   = Math.max(1, Math.min(enabledColumns.length, 6));
-  const KPI_CELL_W = (CW - (KPI_COLS - 1) * 3) / KPI_COLS;
-  const KPI_CELL_H = 18;
-  const KPI_H      = 7 + KPI_CELL_H + 3;   // label + tiles + gap
-
-  // Per-creative row
-  const thumbH_mm = Math.max(12, Math.min(rowHeightPx * 0.18, 65));
-  const thumbW_mm = Math.min(thumbH_mm * 2.5, 55);
-  const INFO_W    = 62;
-  const METRIC_W  = CW - thumbW_mm - 4 - INFO_W - 4;
-  const MCOLS     = 3;
-  const MCELL_W   = (METRIC_W - (MCOLS - 1) * 2) / MCOLS;
-  const MCELL_H   = 12;
-  const mRows     = Math.max(1, Math.ceil(enabledColumns.length / MCOLS));
-  const METRIC_H  = mRows * (MCELL_H + 2) - 2;
-  const ROW_INNER = Math.max(thumbH_mm, METRIC_H + 7);
-  const ROW_H     = ROW_INNER + 8;   // 4mm top + 4mm bottom pad
-  const ROW_GAP   = 2.5;
-
-  const SECTION_LABEL_H = 9;
-  const FOOTER_H        = 14;
-
-  const creativesSectionH =
-    SECTION_LABEL_H +
-    rows.length * (ROW_H + ROW_GAP) - ROW_GAP;
-
-  const PAGE_H =
-    STRIPE_H + HEADER_H + SGAP + CONTEXT_H + SGAP +
-    KPI_H + SGAP + DIVIDER +
-    creativesSectionH +
-    SGAP + FOOTER_H + SGAP;
-
-  // ── Create PDF ─────────────────────────────────────────────────────────────
-  const pdf = new jsPDF({
-    orientation: "portrait",
-    unit: "mm",
-    format: [PW, PAGE_H],
-  });
-
-  // ── Register fonts ────────────────────────────────────────────────────────
-  const FONT_BODY = fonts.poppinsR    ? "poppins"     : "helvetica";
-  const FONT_DISP = fonts.montserratB ? "montserrat"  : "helvetica";
-  if (fonts.poppinsR) {
-    pdf.addFileToVFS("Poppins-Regular.ttf",  fonts.poppinsR);
-    pdf.addFont("Poppins-Regular.ttf",  "poppins",     "normal");
-  }
-  if (fonts.poppinsB) {
-    pdf.addFileToVFS("Poppins-Bold.ttf",     fonts.poppinsB);
-    pdf.addFont("Poppins-Bold.ttf",     "poppins",     "bold");
-  }
-  if (fonts.montserratB) {
-    pdf.addFileToVFS("Montserrat-Bold.ttf",  fonts.montserratB);
-    pdf.addFont("Montserrat-Bold.ttf",  "montserrat",  "bold");
-  }
+  const FONT  = fonts.poppinsR    ? "poppins"    : (notoB64Dash ? "notosans" : "helvetica");
+  const FONTD = fonts.montserratB ? "montserrat" : (notoB64Dash ? "notosans" : "helvetica");
+  if (fonts.poppinsR)    { pdf.addFileToVFS("Pp-R.ttf", fonts.poppinsR);    pdf.addFont("Pp-R.ttf", "poppins",    "normal"); }
+  if (fonts.poppinsB)    { pdf.addFileToVFS("Pp-B.ttf", fonts.poppinsB);    pdf.addFont("Pp-B.ttf", "poppins",    "bold");   }
+  if (fonts.montserratB) { pdf.addFileToVFS("Mt-B.ttf", fonts.montserratB); pdf.addFont("Mt-B.ttf", "montserrat", "bold");   }
+  // Register NotoSans as secondary font to handle ₹ and other Unicode glyphs
+  if (notoB64Dash) { pdf.addFileToVFS("Ns-R.ttf", notoB64Dash); pdf.addFont("Ns-R.ttf", "notosans", "normal"); pdf.addFont("Ns-R.ttf", "notosans", "bold"); }
 
   // ── Drawing helpers ────────────────────────────────────────────────────────
-  const fillRect = (x: number, y: number, w: number, h: number, c: readonly [number,number,number]) => {
-    pdf.setFillColor(c[0], c[1], c[2]);
-    pdf.rect(x, y, w, h, "F");
+  const fR = (x:number,y:number,w:number,h:number,c:readonly[number,number,number]) => {
+    pdf.setFillColor(c[0],c[1],c[2]); pdf.rect(x,y,w,h,"F");
   };
-  const strokeRect = (x: number, y: number, w: number, h: number, c: readonly [number,number,number], lw = 0.2) => {
-    pdf.setDrawColor(c[0], c[1], c[2]);
-    pdf.setLineWidth(lw);
-    pdf.rect(x, y, w, h, "S");
+  const ln = (x1:number,y1:number,x2:number,y2:number,c:readonly[number,number,number],lw=0.2) => {
+    pdf.setDrawColor(c[0],c[1],c[2]); pdf.setLineWidth(lw); pdf.line(x1,y1,x2,y2);
   };
-  const roundedFill = (x: number, y: number, w: number, h: number,
-    fill: readonly [number,number,number], stroke: readonly [number,number,number], lw = 0.2) => {
-    pdf.setFillColor(fill[0], fill[1], fill[2]);
-    pdf.setDrawColor(stroke[0], stroke[1], stroke[2]);
-    pdf.setLineWidth(lw);
-    pdf.roundedRect(x, y, w, h, 2, 2, "FD");
-  };
-  const hline = (hy: number, c: readonly [number,number,number] = BORDER, lw = 0.25) => {
-    pdf.setDrawColor(c[0], c[1], c[2]);
-    pdf.setLineWidth(lw);
-    pdf.line(MARGIN, hy, PW - MARGIN, hy);
-  };
-  const txt = (
-    s: string, x: number, ty: number, size: number,
-    c: readonly [number,number,number],
-    style: "normal"|"bold" = "normal",
-    font: string = FONT_BODY,
-    align: "left"|"right"|"center" = "left",
+  const tx = (
+    s: string, x: number, ty: number, sz: number,
+    c: readonly[number,number,number],
+    bold = false, al: "left"|"right"|"center" = "left", disp = false,
   ) => {
-    pdf.setFont(font, style);
-    pdf.setFontSize(size);
-    pdf.setTextColor(c[0], c[1], c[2]);
-    pdf.text(s, x, ty, { align });
+    pdf.setFont(disp ? FONTD : FONT, bold ? "bold" : "normal");
+    pdf.setFontSize(sz); pdf.setTextColor(c[0],c[1],c[2]);
+    pdf.text(s, x, ty, { align: al });
   };
 
-  // ── Metric value formatter (same as UI) ───────────────────────────────────
-  const metricVal = (key: string, m: ComputedMetrics): string => {
-    switch (key) {
-      case "impressions": return fmtNum(m.impressions);
-      case "clicks":      return fmtNum(m.clicks);
-      case "cost":        return fmtINR0(m.cost);
-      case "conversions": return m.conversions.toFixed(1);
-      case "ctr":         return fmtPct(m.ctr);
-      case "cpc":         return fmtINR(m.cpc);
-      case "cpm":         return fmtINR(m.cpm);
-      case "cr":          return fmtPct(m.cr);
-      case "cpa":         return fmtINR(m.cpa);
-      default:            return "—";
-    }
-  };
-
-  const COL_LABELS: Record<string,string> = {
-    impressions:"Impressions", clicks:"Clicks",  cost:"Spend",
-    conversions:"Conversions", ctr:"CTR",        cpc:"CPC",
-    cpm:"CPM",                 cr:"CR",           cpa:"CPA", share_pct:"% Share",
-  };
-
-  // ── Draw ──────────────────────────────────────────────────────────────────
-  fillRect(0, 0, PW, PAGE_H, PAGE_BG);
-
-  let y = 0;
-
-  // 1. Gold top stripe
-  fillRect(0, 0, PW, STRIPE_H, GOLD);
-  y += STRIPE_H;
-
-  // 2. Header block
-  fillRect(0, y, PW, HEADER_H, HEADER);
-  const hY = y + 9;
-  txt("CreativeVisibility",                        MARGIN,       hY,     13, GOLD,  "bold",   FONT_DISP);
-  txt("Luxury Jewelry · Campaign Performance Portal", MARGIN,    hY + 5.5, 7.5, MUTED, "normal", FONT_BODY);
-  const dr = `${startFmt}  →  ${endFmt}`;
-  txt(dr,                                          PW - MARGIN,  hY,     8,  GOLD,  "bold",   FONT_BODY, "right");
-  const ts = new Date().toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
-  txt(`Generated: ${ts}`,                          PW - MARGIN,  hY + 5.5, 6.5, MUTED, "normal", FONT_BODY, "right");
-  y += HEADER_H;
-  hline(y, GOLD, 0.4);
-  y += SGAP;
-
-  // 3. Context meta strip
-  txt("PERFORMANCE REPORT",      MARGIN, y + 5, 7.5, GOLD, "bold", FONT_BODY);
-  const statusLabel = context.filterBits.join("  |  ");
-  txt(statusLabel,               MARGIN, y + 11, 6.5, MUTED, "normal", FONT_BODY);
-  const colsStr = context.columnsLabel || "None";
-  txt(`Columns: ${colsStr}`,     MARGIN, y + 17, 6.5, MUTED, "normal", FONT_BODY);
-  // Right-side: selection info
-  txt(`${context.selectionLabel}  ·  ${context.selectedCount} / ${context.totalCount} creatives`,
-    PW - MARGIN, y + 5, 7, TEXT, "bold", FONT_BODY, "right");
-  y += CONTEXT_H;
-  y += SGAP;
-
-  // 4. KPI summary tiles
-  txt("GRAND TOTALS", MARGIN, y + 5, 7, GOLD, "bold", FONT_BODY);
-  y += 7;
-  for (let i = 0; i < KPI_COLS; i++) {
-    const key = enabledColumns[i];
-    if (!key) break;
-    const cx = MARGIN + i * (KPI_CELL_W + 3);
-    const isCost = key === "cost";
-    roundedFill(cx, y, KPI_CELL_W, KPI_CELL_H, isCost ? COST_BG : TILE_BG, isCost ? GOLD_D : BORDER, isCost ? 0.4 : 0.2);
-    // label
-    txt((COL_LABELS[key] ?? key).toUpperCase(),
-      cx + KPI_CELL_W / 2, y + 4, 5, MUTED, "normal", FONT_BODY, "center");
-    // value
-    const val = metricVal(key, totals);
-    const valSize = val.length > 9 ? 8 : 9.5;
-    txt(val, cx + KPI_CELL_W / 2, y + 13, valSize, isCost ? GOLD : TEXT, "bold", FONT_BODY, "center");
-  }
-  y += KPI_CELL_H + 3;
-  y += SGAP;
-  hline(y, BORDER);
-  y += DIVIDER;
-  y += SGAP;
-
-  // 5. Creatives section label
-  txt("CREATIVES", MARGIN, y + 5, 7.5, GOLD, "bold", FONT_BODY);
-  txt(`${rows.length} ${rows.length === 1 ? "creative" : "creatives"}`, PW - MARGIN, y + 5, 7, MUTED, "normal", FONT_BODY, "right");
-  y += SECTION_LABEL_H;
-
-  // 6. Per-creative rows
-  const col1X = MARGIN;
-  const col2X = MARGIN + thumbW_mm + 4;
-  const col3X = col2X + INFO_W + 4;
-
-  for (const { creative, metrics } of rows) {
-    // Row card background
-    roundedFill(MARGIN, y, CW, ROW_H, ROW_BG, BORDER, 0.18);
-
-    const rowInnerY = y + 4;
-
-    // ── Thumbnail card ──────────────────────────────────────────────────────
-    roundedFill(col1X, rowInnerY, thumbW_mm, thumbH_mm, TILE_BG, BORDER, 0.18);
-
-    const img = imgMap.get(creative.creative_id);
-    if (img) {
-      const canvas = document.createElement("canvas");
-      const MAX_W  = 900;
-      const scale  = Math.min(1, MAX_W / img.naturalWidth);
-      canvas.width  = img.naturalWidth  * scale;
-      canvas.height = img.naturalHeight * scale;
-      const ctx = canvas.getContext("2d")!;
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL("image/jpeg", 0.88);
-      const imgAspect = canvas.width / canvas.height;
-      const maxW = thumbW_mm - 1.5;
-      const maxH = thumbH_mm - 1.5;
-      let iw = maxW, ih = maxW / imgAspect;
-      if (ih > maxH) { ih = maxH; iw = maxH * imgAspect; }
-      pdf.addImage(
-        dataUrl, "JPEG",
-        col1X + (thumbW_mm - iw) / 2,
-        rowInnerY + (thumbH_mm - ih) / 2,
-        iw, ih,
-      );
-    } else if (creative.creative_type === "Text") {
-      txt("AD", col1X + 3, rowInnerY + 5, 5.5, MUTED, "bold", FONT_BODY);
-      if (creative.headline) {
-        pdf.setFont(FONT_BODY, "bold"); pdf.setFontSize(8);
-        pdf.setTextColor(GOLD[0], GOLD[1], GOLD[2]);
-        const lines = pdf.splitTextToSize(creative.headline, thumbW_mm - 6) as string[];
-        pdf.text(lines.slice(0, 3), col1X + 3, rowInnerY + 11);
-      }
-    }
-
-    // ── Info block ──────────────────────────────────────────────────────────
-    const midY = rowInnerY + ROW_INNER * 0.5;
-
-    // Creative headline or ID
-    const title = creative.headline ?? creative.creative_id;
-    pdf.setFont(FONT_BODY, "bold"); pdf.setFontSize(8);
-    pdf.setTextColor(TEXT[0], TEXT[1], TEXT[2]);
-    const titleLines = pdf.splitTextToSize(title, INFO_W - 2) as string[];
-    pdf.text(titleLines.slice(0, 2), col2X, rowInnerY + 5.5);
-
-    // Campaign name (muted, smaller)
-    if (creative.campaign_name) {
-      pdf.setFont(FONT_BODY, "normal"); pdf.setFontSize(6.5);
-      pdf.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
-      const campLines = pdf.splitTextToSize(creative.campaign_name, INFO_W - 2) as string[];
-      pdf.text(campLines.slice(0, 2), col2X, rowInnerY + 11);
-    }
-
-    // Tag pills: City · Funnel · Type
-    let tagX = col2X;
-    const tagY  = rowInnerY + ROW_INNER - 5;
-    const tags: Array<{ label: string; gold: boolean }> = [
-      { label: creative.city,          gold: false },
-      { label: creative.funnel,        gold: true  },
-      { label: creative.campaign_type, gold: false },
-    ].filter(t => t.label);
-
-    pdf.setFontSize(6);
-    for (const tag of tags) {
-      if (tagX - col2X > INFO_W - 12) break;
-      const tw = pdf.getTextWidth(tag.label) + 4;
-      pdf.setFillColor(TILE_BG[0], TILE_BG[1], TILE_BG[2]);
-      pdf.setDrawColor(BORDER[0], BORDER[1], BORDER[2]);
-      pdf.setLineWidth(0.18);
-      pdf.roundedRect(tagX, tagY - 3, tw, 4.5, 0.8, 0.8, "FD");
-      pdf.setTextColor(tag.gold ? GOLD[0] : MUTED[0], tag.gold ? GOLD[1] : MUTED[1], tag.gold ? GOLD[2] : MUTED[2]);
-      pdf.text(tag.label, tagX + 2, tagY + 0.2);
-      tagX += tw + 2;
-    }
-    // Status badge (right side of info column)
-    const statusColor = creative.status === "Enabled" ? STATUS_ON : STATUS_OFF;
-    const statusLabel2 = creative.status.toUpperCase();
-    pdf.setFontSize(5.5);
-    const sw = pdf.getTextWidth(statusLabel2) + 4;
-    const statusX = col2X + INFO_W - sw;
-    pdf.setFillColor(statusColor[0] * 0.15, statusColor[1] * 0.15, statusColor[2] * 0.15);
-    pdf.setDrawColor(statusColor[0], statusColor[1], statusColor[2]);
-    pdf.setLineWidth(0.2);
-    pdf.roundedRect(statusX, rowInnerY + 2, sw, 4.5, 0.8, 0.8, "FD");
-    pdf.setTextColor(statusColor[0], statusColor[1], statusColor[2]);
-    pdf.text(statusLabel2, statusX + 2, rowInnerY + 5.5);
-
-    // ── Metric tiles grid ───────────────────────────────────────────────────
-    // Label row "METRICS" above grid
-    txt("METRICS", col3X, rowInnerY + 4, 5.5, MUTED, "normal", FONT_BODY);
-
+  // right-aligned metric values
+  const drawMetrics = (m: ComputedMetrics, ry: number, rh: number, bold: boolean, total: boolean) => {
     for (let i = 0; i < enabledColumns.length; i++) {
-      const key  = enabledColumns[i];
-      const col  = i % MCOLS;
-      const row  = Math.floor(i / MCOLS);
-      const cx   = col3X + col * (MCELL_W + 2);
-      const cy   = rowInnerY + 6 + row * (MCELL_H + 2);
-      const isCost = key === "cost";
-
-      roundedFill(cx, cy, MCELL_W, MCELL_H, isCost ? COST_BG : TILE_BG, isCost ? GOLD_D : BORDER, isCost ? 0.35 : 0.18);
-
-      const midX = cx + MCELL_W / 2;
-      txt((COL_LABELS[key] ?? key).toUpperCase(), midX, cy + 3.5, 4.5, MUTED, "normal", FONT_BODY, "center");
-      const val = metricVal(key, metrics);
-      const vSize = val.length > 9 ? 7 : 8;
-      txt(val, midX, cy + 9.5, vSize, isCost ? GOLD : TEXT, "bold", FONT_BODY, "center");
+      const key = enabledColumns[i];
+      const rx  = MH + LABEL_W + i*(MCOL_W+MCOL_GAP) + MCOL_W;
+      const ty  = ry + rh/2 + 2.5;
+      let val: string;
+      switch (key) {
+        case "impressions": val = fmtNum(m.impressions);       break;
+        case "clicks":      val = fmtNum(m.clicks);            break;
+        case "cost":        val = safe(fmtINR0(m.cost));       break;
+        case "conversions": val = m.conversions.toFixed(1);    break;
+        case "ctr":         val = fmtPct(m.ctr);               break;
+        case "cpc":         val = safe(fmtINR(m.cpc));         break;
+        case "cpm":         val = safe(fmtINR(m.cpm));         break;
+        case "cr":          val = fmtPct(m.cr);                break;
+        case "cpa":         val = safe(fmtINR(m.cpa));         break;
+        default:            val = "—";
+      }
+      const col: readonly[number,number,number] = key === "cost" ? GOLD : TEXT;
+      tx(val, rx, ty, total ? 7.5 : 7, col, bold || total, "right");
     }
+  };
 
-    y += ROW_H + ROW_GAP;
+  // vertical column separators
+  const drawVSep = (y: number, h: number) => {
+    pdf.setDrawColor(BDR[0],BDR[1],BDR[2]); pdf.setLineWidth(0.15);
+    for (let i = 0; i < enabledColumns.length; i++) {
+      const x = MH + LABEL_W + i*(MCOL_W+MCOL_GAP) - 0.75;
+      pdf.line(x, y, x, y+h);
+    }
+  };
+
+  const COL_ABBR: Record<string,string> = {
+    impressions:"IMPR.",clicks:"CLICKS",cost:"SPEND",conversions:"CONV.",
+    ctr:"CTR",cpc:"CPC",cpm:"CPM",cr:"CR",cpa:"CPA",share_pct:"%SHR",
+  };
+
+  // column-header bar
+  const drawColHdr = (y: number) => {
+    fR(MH, y, CW, COL_H, HDR);
+    // Subtle top border on the column header
+    ln(MH, y, MH+CW, y, BDR, 0.15);
+    ln(MH, y+COL_H, MH+CW, y+COL_H, GOLD, 0.3);
+    tx([...hierarchyLabels, "Creative"].join("  ›  "), MH+4, y+6, 6, MUTED);
+    for (let i = 0; i < enabledColumns.length; i++) {
+      const key = enabledColumns[i];
+      tx(COL_ABBR[key]??key, MH+LABEL_W+i*(MCOL_W+MCOL_GAP)+MCOL_W, y+6, 6, GOLD, true, "right");
+    }
+    drawVSep(y, COL_H);
+  };
+
+  // brand header (top of document)
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const fd = (iso:string) => { const [yr,m,d]=iso.split("-"); return `${+d}-${MONTHS[+m-1]}-${yr}`; };
+  const [si, ei] = context.dateRange.includes(" to ")
+    ? context.dateRange.split(" to ")
+    : [context.dateRange, context.dateRange];
+
+  const drawHeader = () => {
+    fR(0, 0, PW, STRIPE_H, GOLD);
+    fR(0, STRIPE_H, PW, FHD_H, HDR);
+    ln(0, STRIPE_H+FHD_H, PW, STRIPE_H+FHD_H, GOLD, 0.45);
+    tx("CreativeVisibility",                           MH,    STRIPE_H+9.5, 14, GOLD, true, "left", true);
+    tx("Luxury Jewelry · Campaign Performance Portal", MH,    STRIPE_H+15.5, 7, MUTED);
+    tx(safe(`${fd(si)}  →  ${fd(ei)}`),               PW-MH, STRIPE_H+9.5, 8.5, GOLD, true, "right");
+    const ts = new Date().toLocaleString("en-IN",{dateStyle:"medium",timeStyle:"short"});
+    tx(`Generated: ${ts}`,                            PW-MH, STRIPE_H+15.5, 6.5, MUTED, false, "right");
+    // Filter summary — left; selection scope — right
+    const filterStr = context.filterBits.length ? context.filterBits.join("  ·  ") : "All filters";
+    tx(filterStr,                                      MH,    STRIPE_H+21.5, 5.5, MUTED);
+    tx(context.selectionLabel,                         PW-MH, STRIPE_H+21.5, 6, GOLD, true, "right");
+  };
+
+  // footer (bottom of document — single occurrence)
+  const drawFooter = () => {
+    const fy = PAGE_H - MV - FOOTER_H + 5;
+    ln(MH, PAGE_H-MV-FOOTER_H, MH+CW, PAGE_H-MV-FOOTER_H, BDR, 0.2);
+    tx("CreativeVisibility  ·  Confidential",     MH,    fy, 5.5, MUTED);
+    tx(safe(`${context.selectedCount} creatives  ·  ${fd(si)} → ${fd(ei)}`), PW-MH, fy, 5.5, MUTED, false, "right");
+    tx("© 2026 CreativeVisibility. All rights reserved.", PW/2, fy, 5.5, MUTED, false, "center");
+  };
+
+  // ── Draw document ──────────────────────────────────────────────────────────
+  fR(0, 0, PW, PAGE_H, BG);   // page background
+  drawHeader();
+  drawColHdr(STRIPE_H + FHD_H);
+  let y = START_Y;
+
+  for (const row of tableRows) {
+
+    // TOTAL row
+    if (row.kind === "total") {
+      fR(MH, y, CW, TOTAL_H, TOT_BG);
+      ln(MH, y,         MH+CW, y,         TOT_BD, 0.35);
+      ln(MH, y+TOTAL_H, MH+CW, y+TOTAL_H, TOT_BD, 0.35);
+      fR(MH, y, 3.5, TOTAL_H, GOLD);
+      tx("TOTAL", MH+6.5, y+TOTAL_H/2+2.8, 8.5, GOLD, true, "left", true);
+      // Measure TOTAL text width at the same font/size used to draw it
+      pdf.setFont(FONTD, "bold"); pdf.setFontSize(8.5);
+      const totalTextW = pdf.getTextWidth("TOTAL");
+      pdf.setFontSize(6);
+      const bLabel = `${row.count} creatives`;
+      const bw  = pdf.getTextWidth(bLabel) + 6;
+      const bx  = MH + 6.5 + totalTextW + 4;
+      const BAD: readonly[number,number,number] = theme==="dark" ? [55,44,16] : [252,244,200];
+      pdf.setFillColor(BAD[0],BAD[1],BAD[2]);
+      pdf.setDrawColor(TOT_BD[0],TOT_BD[1],TOT_BD[2]);
+      pdf.setLineWidth(0.25);
+      pdf.roundedRect(bx, y+TOTAL_H/2-2.8, bw, 5.5, 1.2, 1.2, "FD");
+      tx(bLabel, bx+3, y+TOTAL_H/2+1.5, 6, GOLD);
+      drawMetrics(row.metrics, y, TOTAL_H, true, true);
+      drawVSep(y, TOTAL_H);
+      y += TOTAL_H;
+
+    // Group row
+    } else if (row.kind === "group") {
+      const d = Math.min(row.depth, GBG.length-1);
+      fR(MH, y, CW, GROUP_H, GBG[d]);
+      // Only depth-0 gets the prominent gold left bar; deeper rows get a thin neutral line
+      if (row.depth === 0) {
+        fR(MH, y, 3, GROUP_H, GOLD);
+      } else {
+        fR(MH, y, 1, GROUP_H, BDR);
+      }
+      ln(MH, y+GROUP_H, MH+CW, y+GROUP_H, BDR, 0.18);
+
+      const ix = MH + 4 + row.depth * INDENT;
+      const my = y + GROUP_H/2 + 2;
+      const arrowCol: readonly[number,number,number] = row.depth === 0 ? GOLD : MUTED;
+      tx("▸", ix, my, 6, arrowCol);
+      const lsz = row.depth === 0 ? 8.5 : row.depth === 1 ? 7.5 : 7;
+      const lbd = row.depth <= 1;
+      tx(row.label, ix+5.5, my, lsz, TEXT, lbd);
+
+      // Measure label width at same font/size used to draw it
+      pdf.setFont(FONT, lbd ? "bold" : "normal"); pdf.setFontSize(lsz);
+      const labelTextW = pdf.getTextWidth(row.label);
+      pdf.setFontSize(6);
+      const cBx = ix + 5.5 + labelTextW + 3.5;
+      if (cBx + 16 < MH + LABEL_W) {
+        const CBD: readonly[number,number,number] = theme==="dark" ? [30,30,42] as const : [218,218,235] as const;
+        pdf.setFillColor(CBD[0],CBD[1],CBD[2]);
+        pdf.setDrawColor(BDR[0],BDR[1],BDR[2]);
+        pdf.setLineWidth(0.15);
+        const cBw = pdf.getTextWidth(String(row.count)) + 5;
+        pdf.roundedRect(cBx, y+GROUP_H/2-2.5, cBw, 5, 1, 1, "FD");
+        tx(String(row.count), cBx+2.5, y+GROUP_H/2+1.2, 6, MUTED);
+      }
+      drawMetrics(row.metrics, y, GROUP_H, lbd, false);
+      drawVSep(y, GROUP_H);
+      y += GROUP_H;
+
+    // Creative row
+    } else {
+      fR(MH, y, CW, CREATIVE_H, CR_BG);
+      ln(MH, y+CREATIVE_H, MH+CW, y+CREATIVE_H, BDR, 0.12);
+      drawVSep(y, CREATIVE_H);
+
+      const { creative, metrics, depth } = row;
+      const ix = MH + 4 + depth * INDENT;
+      const tW = Math.min(tH * 1.55, 62);  // wider cell; image auto-sized inside
+
+      // Thumbnail card background
+      pdf.setFillColor(HDR[0],HDR[1],HDR[2]);
+      pdf.setDrawColor(BDR[0],BDR[1],BDR[2]); pdf.setLineWidth(0.15);
+      pdf.roundedRect(ix, y+3, tW, tH, 1.5, 1.5, "FD");
+
+      const img = imgMap.get(creative.creative_id);
+      if (img && img.naturalWidth > 0) {
+        const canvas = document.createElement("canvas");
+        const sc     = Math.min(1, 800/img.naturalWidth);
+        canvas.width  = img.naturalWidth  * sc;
+        canvas.height = img.naturalHeight * sc;
+        canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const ar = canvas.width / canvas.height;
+        let iw = tW-0.8, ih = iw/ar;
+        if (ih > tH-0.8) { ih = tH-0.8; iw = ih*ar; }
+        const imgX = ix + (tW-iw)/2;
+        const imgY = y + 3 + (tH-ih)/2;
+        pdf.addImage(canvas.toDataURL("image/jpeg",0.88),"JPEG",imgX,imgY,iw,ih);
+
+        // Video play button overlay
+        if (creative.creative_type === "Video") {
+          const cx = imgX + iw/2;
+          const cy = imgY + ih/2;
+          const r  = Math.min(ih * 0.2, 4.5);
+          pdf.setFillColor(255,255,255);
+          pdf.setDrawColor(200,200,200);
+          pdf.setLineWidth(0.15);
+          pdf.circle(cx, cy, r, "FD");
+          // Play glyph
+          pdf.setFont(FONT,"bold"); pdf.setFontSize(r * 2.6);
+          pdf.setTextColor(40,40,40);
+          pdf.text("▶", cx + r*0.06, cy + r*0.42, { align: "center" });
+        }
+      } else if (creative.creative_type === "Text") {
+        tx("AD", ix+2.5, y+5, 5.5, MUTED, true);
+        if (creative.headline) {
+          pdf.setFont(FONT,"bold"); pdf.setFontSize(6);
+          pdf.setTextColor(GOLD[0],GOLD[1],GOLD[2]);
+          pdf.text((pdf.splitTextToSize(creative.headline, tW-5) as string[]).slice(0,2), ix+2.5, y+9);
+        }
+      }
+
+      const textX = ix + tW + 3;
+      const textW = MH + LABEL_W - textX - 2;
+
+      // Creative name — 2 lines, bold
+      const name = creative.headline || creative.creative_url.replace(/^https?:\/\//,"").slice(0,70);
+      pdf.setFont(FONT,"bold"); pdf.setFontSize(7);
+      const nameLines = (pdf.splitTextToSize(name, textW) as string[]).slice(0,2);
+      // Center the (name lines + tags) block vertically in the row
+      const approxBlockH = nameLines.length * 3.2 + 7.5;
+      const nameTopY = y + Math.max(4, (CREATIVE_H - approxBlockH) / 2 + 3.2);
+      pdf.setTextColor(TEXT[0],TEXT[1],TEXT[2]);
+      pdf.text(nameLines, textX, nameTopY);
+
+      // Tags row below name
+      const tags = [creative.creative_type, creative.city, creative.funnel, creative.category]
+        .filter(Boolean).slice(0,4);
+      let tagX = textX;
+      const tagY = nameTopY + nameLines.length * 3.2 + 1.8;
+      pdf.setFontSize(5.5);
+      for (const t of tags) {
+        if (!t || tagX - textX > textW - 14) break;
+        const tw = pdf.getTextWidth(t) + 4;
+        const isGold = t === creative.funnel;
+        const tagBg: readonly[number,number,number]  = isGold
+          ? (theme==="dark" ? [40,30,8] as const  : [255,248,215] as const)
+          : (theme==="dark" ? [22,22,30] as const : [235,235,248] as const);
+        const tagBd: readonly[number,number,number]  = isGold
+          ? (theme==="dark" ? [100,70,20] as const : [200,160,60] as const)
+          : BDR;
+        pdf.setFillColor(tagBg[0],tagBg[1],tagBg[2]);
+        pdf.setDrawColor(tagBd[0],tagBd[1],tagBd[2]); pdf.setLineWidth(0.15);
+        pdf.roundedRect(tagX, tagY-2.5, tw, 4.5, 0.9, 0.9, "FD");
+        tx(t, tagX+2, tagY+0.7, 5.5, isGold ? GOLD : MUTED);
+        tagX += tw + 2;
+      }
+
+      drawMetrics(metrics, y, CREATIVE_H, false, false);
+      y += CREATIVE_H;
+    }
   }
 
-  // 7. Footer
-  y += SGAP;
-  hline(y, GOLD, 0.35);
-  y += 5;
-  txt(
-    "CreativeVisibility  ·  Confidential  ·  Not for external distribution without authorisation",
-    PW / 2, y, 6, MUTED, "normal", FONT_BODY, "center",
-  );
-  txt("© 2026 CreativeVisibility. All rights reserved.", PW / 2, y + 4, 5.5, MUTED, "normal", FONT_BODY, "center");
-
-  // ── Save ──────────────────────────────────────────────────────────────────
-  const safeRange = `${startFmt}_to_${endFmt}`;
-  pdf.save(`CreativeVisibility_Report_${safeRange}.pdf`);
+  drawFooter();
+  pdf.save(`CreativeVisibility_Report_${si}_to_${ei}.pdf`);
 }
+
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Legacy dashboard-level PDF export (whole .print-area snapshot via dom-to-image)
