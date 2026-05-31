@@ -23,7 +23,6 @@ export interface ExportPick {
   theme:            "light" | "dark";
   scope:            "current" | "all";
   rowHeight:        number | null;
-  includeCreatives: boolean;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -139,7 +138,7 @@ function MetricCells({ metrics, keys, C, size = 7, bold = false, goldCost = fals
 // ── Table preview pane (HTML mockup matching the PDF structure) ────────────────
 
 function TablePreviewPane({
-  visibleRows, totals, context, hierarchy, theme, effectiveDensity,
+  visibleRows, totals, context, hierarchy, theme, effectiveDensity, activeLevel,
 }: {
   visibleRows:       Array<{ creative: Creative; metrics: ComputedMetrics }>;
   totals:            ComputedMetrics;
@@ -147,15 +146,17 @@ function TablePreviewPane({
   hierarchy:         Dim[];
   theme:             "dark" | "light";
   effectiveDensity:  number;
+  activeLevel:       number;
 }) {
   const C = PALETTES[theme];
   const cols = context.columnKeys.slice(0, 5);
   const thumbH = Math.max(22, Math.min(Math.round(effectiveDensity * 0.37), 58));
   const thumbW = Math.min(thumbH * 1.7, 90);
 
-  // Build a 2-level preview tree: top group + first creative per group
+  // Build a preview of the current export depth, matching the dashboard drill level.
   const firstDim = hierarchy[0];
   const getVal   = firstDim ? DIM_META[firstDim].get : null;
+  const includeCreativePreview = activeLevel >= hierarchy.length;
 
   const previewGroups = useMemo(() => {
     if (!getVal || !visibleRows.length) return [];
@@ -184,7 +185,8 @@ function TablePreviewPane({
       }));
   }, [visibleRows, getVal]);
 
-  const breadcrumb = [...hierarchy.map(d => DIM_META[d].label), "Creative"].join(" · ");
+  const visibleHierarchy = includeCreativePreview ? hierarchy : hierarchy.slice(0, Math.min(activeLevel + 1, hierarchy.length));
+  const breadcrumb = [...visibleHierarchy.map(d => DIM_META[d].label), ...(includeCreativePreview ? ["Creative"] : [])].join(" · ");
 
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const fmtDate = (iso: string) => { const [y, m, d] = iso.split("-"); return `${+d} ${MONTHS[+m-1]} ${y}`; };
@@ -280,8 +282,8 @@ function TablePreviewPane({
               <MetricCells metrics={group.metrics} keys={cols} C={C} size={7} bold />
             </div>
 
-            {/* First creative row */}
-            {creative && (
+            {/* First creative row — only when the dashboard is expanded to Creative */}
+            {includeCreativePreview && creative && (
               <div style={{
                 display: "flex", alignItems: "center",
                 background: C.creativeBg, padding: `5px 12px 5px ${12 + 14}px`,
@@ -342,16 +344,16 @@ interface Props {
   visibleRows: Array<{ creative: Creative; metrics: ComputedMetrics }>;
   totals:      ComputedMetrics;
   hierarchy:   Dim[];
+  activeLevel: number;
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
-export function ExportModal({ open, onClose, onPick, context, visibleRows, totals, hierarchy }: Props) {
+export function ExportModal({ open, onClose, onPick, context, visibleRows, totals, hierarchy, activeLevel }: Props) {
   const [scope, setScope]               = useState<"current" | "all">("current");
   const [density, setDensity]           = useState<number | null>(null);
   const [previewTheme, setPreviewTheme] = useState<"dark" | "light">("dark");
   const [hoverTheme, setHoverTheme]     = useState<"dark" | "light" | null>(null);
-  const [includeCreatives, setIncludeCreatives] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -359,7 +361,6 @@ export function ExportModal({ open, onClose, onPick, context, visibleRows, total
     setDensity(null);
     setPreviewTheme("dark");
     setHoverTheme(null);
-    setIncludeCreatives(false);
   }, [open]);
 
   const liveTheme        = hoverTheme ?? previewTheme;
@@ -509,6 +510,7 @@ export function ExportModal({ open, onClose, onPick, context, visibleRows, total
                   hierarchy={hierarchy}
                   theme={liveTheme}
                   effectiveDensity={effectiveDensity}
+                  activeLevel={activeLevel}
                 />
               </div>
 
@@ -542,30 +544,12 @@ export function ExportModal({ open, onClose, onPick, context, visibleRows, total
             </div>
           </div>
 
-          {/* ── Depth toggle ──────────────────────────────────────────── */}
-          <label className="flex items-start gap-3 rounded-xl border border-border/60 bg-background/40 px-4 py-3 cursor-pointer hover:border-gold/40 transition">
-            <input
-              type="checkbox"
-              checked={includeCreatives}
-              onChange={(e) => setIncludeCreatives(e.target.checked)}
-              className="mt-0.5 w-4 h-4 accent-gold cursor-pointer"
-            />
-            <div className="min-w-0">
-              <div className="text-[12px] font-medium">Include individual creatives</div>
-              <div className="text-[10.5px] text-muted-foreground mt-0.5">
-                Off by default — the PDF stops at your selected grouping level
-                {hierarchy.length ? ` (${hierarchy.map(d => DIM_META[d].label).join(" › ")})` : ""}.
-                Turn on to expand every group down to individual creatives with thumbnails.
-              </div>
-            </div>
-          </label>
-
           {/* ── Download CTA ──────────────────────────────────────────── */}
           <div className="space-y-2">
             <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">Download as</div>
             <div className="grid grid-cols-2 gap-3">
               <button
-                onClick={() => onPick({ theme: "light", scope, rowHeight: density, includeCreatives })}
+                onClick={() => onPick({ theme: "light", scope, rowHeight: density })}
                 onMouseEnter={() => setHoverTheme("light")}
                 onMouseLeave={() => setHoverTheme(null)}
                 className="group rounded-xl border-2 border-border/60 p-5 bg-white text-gray-900 hover:border-gold/70 transition-all duration-200 text-left"
@@ -575,7 +559,7 @@ export function ExportModal({ open, onClose, onPick, context, visibleRows, total
                 <div className="text-xs text-gray-500 mt-1">Classic client-ready report</div>
               </button>
               <button
-                onClick={() => onPick({ theme: "dark", scope, rowHeight: density, includeCreatives })}
+                onClick={() => onPick({ theme: "dark", scope, rowHeight: density })}
                 onMouseEnter={() => setHoverTheme("dark")}
                 onMouseLeave={() => setHoverTheme(null)}
                 className="group rounded-xl border-2 border-border/60 p-5 bg-[#0a0b0f] text-gray-100 hover:border-gold/70 transition-all duration-200 text-left"

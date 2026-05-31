@@ -161,6 +161,7 @@ function Portal() {
   const [rowHeight, setRowHeight]       = useState<number>(96);
   const [sortBy, setSortBy]             = useState<string | null>(null);
   const [activeKey, setActiveKey]       = useState<string>("ALL");
+  const [directoryLevel, setDirectoryLevel] = useState<number>(1);
   const [pdfLoading, setPdfLoading]     = useState(false);
   const [activeTab, setActiveTab]       = useState<"directory" | "top">("directory");
 
@@ -550,7 +551,7 @@ function Portal() {
     toast.success(`Exported ${visibleRows.length} creatives to CSV`);
   };
 
-  const handleExportPDF = async ({ theme, scope, rowHeight: rowHeightOverride, includeCreatives }: ExportPick) => {
+  const handleExportPDF = async ({ theme, scope, rowHeight: rowHeightOverride }: ExportPick) => {
     setExportOpen(false);
     setPdfLoading(true);
 
@@ -584,13 +585,17 @@ function Portal() {
 
     const enabledCols = Object.entries(columns).filter(([, v]) => v).map(([k]) => k);
 
-    const tableRows = buildPdfTableRows(exportRows, hierarchy, exportTotals, includeCreatives);
+    const includeCreatives = directoryLevel >= hierarchy.length;
+    const exportHierarchy = includeCreatives
+      ? hierarchy
+      : hierarchy.slice(0, Math.min(directoryLevel + 1, hierarchy.length));
+    const tableRows = buildPdfTableRows(exportRows, exportHierarchy, exportTotals, includeCreatives);
 
     try {
       await exportDashboardPdf({
         tableRows,
         enabledColumns:  enabledCols,
-        hierarchyLabels: hierarchy.map(d => DIM_META[d].label),
+        hierarchyLabels: exportHierarchy.map(d => DIM_META[d].label),
         context: {
           dateRange:      dateRangeLabel,
           selectionLabel: scope === "all" ? "All creatives" : selectionLabel,
@@ -893,6 +898,8 @@ function Portal() {
                       hierarchy={hierarchy} creativeRowHeight={rowHeight}
                       sortBy={sortBy}
                       onSortByChange={setSortBy}
+                      activeLevel={directoryLevel}
+                      onActiveLevelChange={setDirectoryLevel}
                       onCreativeClick={openDetail}
                       compareMode={filters.compareMode}
                       compareMetrics={compareMetricsMap ?? undefined}
@@ -983,6 +990,7 @@ function Portal() {
         visibleRows={visibleRows}
         totals={totals}
         hierarchy={hierarchy}
+        activeLevel={directoryLevel}
       />
 
       <CreativeDetailModal
