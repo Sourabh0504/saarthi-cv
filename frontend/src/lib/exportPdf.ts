@@ -988,13 +988,14 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
   // column-header bar
   const drawColHdr = (y: number) => {
     fR(MH, y, CW, COL_H, HDR);
-    // Subtle top border on the column header
     ln(MH, y, MH+CW, y, BDR, 0.15);
-    ln(MH, y+COL_H, MH+CW, y+COL_H, GOLD, 0.3);
-    tx([...hierarchyLabels, "Creative"].join("  ›  "), MH+4, y+6, 6, MUTED);
+    ln(MH, y+COL_H, MH+CW, y+COL_H, GOLD, 0.35);
+    // Breadcrumb of hierarchy
+    tx("HIERARCHY", MH+4, y+4, 5, MUTED, true);
+    tx([...hierarchyLabels, "Creative"].join("  ›  "), MH+4, y+8, 6.5, TEXT, true);
     for (let i = 0; i < enabledColumns.length; i++) {
       const key = enabledColumns[i];
-      tx(COL_ABBR[key]??key, MH+LABEL_W+i*(MCOL_W+MCOL_GAP)+MCOL_W, y+6, 6, GOLD, true, "right");
+      tx(COL_ABBR[key]??key, MH+LABEL_W+i*(MCOL_W+MCOL_GAP)+MCOL_W, y+6.5, 6.2, GOLD, true, "right");
     }
     drawVSep(y, COL_H);
   };
