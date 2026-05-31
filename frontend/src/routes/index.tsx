@@ -137,8 +137,6 @@ function Portal() {
     }
   }, [isLoggedIn, authLoading, navigate]);
 
-  if (authLoading || !isLoggedIn) return null;
-
   // Date range defaults to auto (sheet min/max). Inputs are set after first load.
   const startDef = "";
   const endDef   = "";
@@ -163,6 +161,8 @@ function Portal() {
   const [activeKey, setActiveKey]       = useState<string>("ALL");
   const [pdfLoading, setPdfLoading]     = useState(false);
   const [activeTab, setActiveTab]       = useState<"directory" | "top">("directory");
+
+  if (authLoading || !isLoggedIn) return null;
 
   // ── Raw data (loaded once, aggregated client-side) ────────────────────────────────
   const [rawDimensions, setRawDimensions] = useState<CreativeDimensionMap>({});
