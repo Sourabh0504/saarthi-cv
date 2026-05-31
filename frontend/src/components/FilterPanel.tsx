@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { Search, Columns3, FileDown, FileText, Loader2, ChevronDown, Check, RotateCcw } from "lucide-react";
-import type { Creative } from "@/lib/api";
+
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { cn } from "@/lib/utils";
