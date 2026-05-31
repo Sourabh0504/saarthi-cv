@@ -917,8 +917,8 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
   const PAGE_H = START_Y + contentH + FOOTER_H + MV;
 
   // ── Thumbnail dimensions (left-aligned inside the label column) ────────────
-  const THUMB_H = CREATIVE_H - 6;
-  const THUMB_W = Math.min(34, Math.max(22, THUMB_H * 1.6));
+  const THUMB_H = CREATIVE_H - 4;
+  const THUMB_W = Math.min(42, Math.max(28, THUMB_H * 1.6));
 
   // ── Pre-load thumbnails for all creative rows in parallel ──────────────────
   const imgMap = new Map<string, HTMLImageElement>();
@@ -1151,58 +1151,105 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
       const thumbX = ix;
       const thumbY = y + (CREATIVE_H - THUMB_H) / 2;
       const img = imgMap.get(creative.creative_id);
-      // Frame
-      fR(thumbX, thumbY, THUMB_W, THUMB_H, theme === "dark" ? [18,18,24] : [245,245,250]);
+      // Frame: solid dark fill so letterbox bands look intentional
+      fR(thumbX, thumbY, THUMB_W, THUMB_H, theme === "dark" ? [8,8,12] : [240,240,245]);
       if (img) {
+        // Aspect-preserved CONTAIN fit — no face distortion
+        const iw = img.naturalWidth  || img.width  || 1;
+        const ih = img.naturalHeight || img.height || 1;
+        const slotR = THUMB_W / THUMB_H;
+        const imgR  = iw / ih;
+        let dw = THUMB_W, dh = THUMB_H;
+        if (imgR > slotR) { dh = THUMB_W / imgR; } else { dw = THUMB_H * imgR; }
+        const dx = thumbX + (THUMB_W - dw) / 2;
+        const dy = thumbY + (THUMB_H - dh) / 2;
         try {
-          pdf.addImage(img, "JPEG", thumbX, thumbY, THUMB_W, THUMB_H, undefined, "FAST");
+          pdf.addImage(img, "JPEG", dx, dy, dw, dh, undefined, "FAST");
         } catch {
-          try { pdf.addImage(img, "PNG", thumbX, thumbY, THUMB_W, THUMB_H, undefined, "FAST"); } catch {}
+          try { pdf.addImage(img, "PNG", dx, dy, dw, dh, undefined, "FAST"); } catch {}
         }
       } else if (creative.creative_type === "Text") {
         // Text-ad style placeholder
         fR(thumbX, thumbY, THUMB_W, THUMB_H, theme === "dark" ? [240,240,245] : [255,255,255]);
         pdf.setDrawColor(BDR[0],BDR[1],BDR[2]); pdf.setLineWidth(0.15);
         pdf.rect(thumbX, thumbY, THUMB_W, THUMB_H);
-        tx("Ad", thumbX+1.5, thumbY+3, 5, [66,133,244] as const, true);
-        const hl = (creative.headline || "").slice(0, 28);
-        pdf.setFont(FONT, "bold"); pdf.setFontSize(5.2);
+        tx("Ad", thumbX+1.8, thumbY+3.4, 5.2, [66,133,244] as const, true);
+        const hl = (creative.headline || "").slice(0, 36);
+        pdf.setFont(FONT, "bold"); pdf.setFontSize(5.6);
         pdf.setTextColor(26, 13, 171);
-        const hLines = (pdf.splitTextToSize(hl, THUMB_W - 3) as string[]).slice(0, 2);
-        pdf.text(hLines, thumbX+1.5, thumbY+6.5);
+        const hLines = (pdf.splitTextToSize(hl, THUMB_W - 3) as string[]).slice(0, 3);
+        pdf.text(hLines, thumbX+1.8, thumbY+7);
       } else {
         pdf.setDrawColor(BDR[0],BDR[1],BDR[2]); pdf.setLineWidth(0.15);
         pdf.rect(thumbX, thumbY, THUMB_W, THUMB_H);
         tx(creative.creative_type.toUpperCase(), thumbX + THUMB_W/2, thumbY + THUMB_H/2 + 1.5, 6, MUTED, true, "center");
       }
-      // Type badge bottom-right of thumb
-      pdf.setFont(FONT, "bold"); pdf.setFontSize(4.8);
-      const badge = creative.creative_type.toUpperCase();
-      const bdW = pdf.getTextWidth(badge) + 2.4;
-      pdf.setFillColor(0, 0, 0);
-      pdf.rect(thumbX + THUMB_W - bdW - 0.6, thumbY + THUMB_H - 3.6, bdW, 3, "F");
-      pdf.setTextColor(255, 255, 255);
-      pdf.text(badge, thumbX + THUMB_W - bdW/2 - 0.6, thumbY + THUMB_H - 1.4, { align: "center" });
+      // Crisp gold hairline frame around the thumb
+      pdf.setDrawColor(GOLD[0], GOLD[1], GOLD[2]); pdf.setLineWidth(0.25);
+      pdf.rect(thumbX, thumbY, THUMB_W, THUMB_H);
 
-      const textX = thumbX + THUMB_W + 3;
+      // Type badge — top-left corner (out of the way of subject content)
+      pdf.setFont(FONT, "bold"); pdf.setFontSize(4.6);
+      const badge = creative.creative_type.toUpperCase();
+      const bdW = pdf.getTextWidth(badge) + 2.6;
+      pdf.setFillColor(GOLD[0], GOLD[1], GOLD[2]);
+      pdf.rect(thumbX, thumbY, bdW, 3.2, "F");
+      pdf.setTextColor(15, 15, 20);
+      pdf.text(badge, thumbX + bdW/2, thumbY + 2.2, { align: "center" });
+
+      const textX = thumbX + THUMB_W + 4;
       const textW = LABEL_W - (textX - MH) - 4;
 
-      // Primary label — creative URL first (matches dashboard), then headline fallback
-      const primary = creative.creative_url
-        ? creative.creative_url.replace(/^https?:\/\//, "")
-        : (creative.headline || creative.creative_id);
-      pdf.setFont(FONT, "bold"); pdf.setFontSize(7.2);
+      // Pretty primary label
+      // - YouTube watch URLs → "YouTube · <video-id>"
+      // - Generic URLs → "<hostname> · <last-path-segment>"
+      // - Fallback to headline / creative_id
+      let primary = "";
+      let secondary = "";
+      const url = creative.creative_url || "";
+      if (url) {
+        try {
+          const u = new URL(url);
+          if (/youtube\.com|youtu\.be/i.test(u.hostname)) {
+            const vid = u.searchParams.get("v") || u.pathname.split("/").filter(Boolean).pop() || "";
+            primary = "YouTube Video";
+            secondary = vid ? `Video ID · ${vid}` : u.hostname;
+          } else {
+            primary = creative.headline || u.hostname.replace(/^www\./, "");
+            const seg = u.pathname.split("/").filter(Boolean).slice(-1)[0] || "";
+            secondary = seg ? `${u.hostname.replace(/^www\./, "")} · ${seg}` : u.hostname.replace(/^www\./, "");
+          }
+        } catch {
+          primary = creative.headline || url.replace(/^https?:\/\//, "");
+        }
+      } else {
+        primary = creative.headline || creative.creative_id;
+      }
+
+      pdf.setFont(FONT, "bold"); pdf.setFontSize(8);
       const nameLines = (pdf.splitTextToSize(primary, textW) as string[]).slice(0, 2);
-      const approxBlockH = nameLines.length * 3.2 + 7.5;
-      const nameTopY = y + Math.max(4, (CREATIVE_H - approxBlockH) / 2 + 3.2);
+      pdf.setFontSize(6); pdf.setFont(FONT, "normal");
+      const subLines = secondary
+        ? (pdf.splitTextToSize(secondary, textW) as string[]).slice(0, 1)
+        : [];
+      const approxBlockH = nameLines.length * 3.6 + subLines.length * 2.8 + 6;
+      const nameTopY = y + Math.max(4.5, (CREATIVE_H - approxBlockH) / 2 + 3.6);
+
+      pdf.setFont(FONT, "bold"); pdf.setFontSize(8);
       pdf.setTextColor(TEXT[0], TEXT[1], TEXT[2]);
       pdf.text(nameLines, textX, nameTopY);
+
+      if (subLines.length) {
+        pdf.setFont(FONT, "normal"); pdf.setFontSize(6);
+        pdf.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
+        pdf.text(subLines, textX, nameTopY + nameLines.length * 3.6 + 1);
+      }
 
       // Tags row below label
       const tags = [creative.creative_type, creative.city, creative.funnel, creative.category]
         .filter(Boolean).slice(0, 4);
       let tagX = textX;
-      const tagY = nameTopY + nameLines.length * 3.2 + 1.8;
+      const tagY = nameTopY + nameLines.length * 3.6 + subLines.length * 2.8 + 3.2;
       pdf.setFontSize(5.5);
       for (const t of tags) {
         if (!t || tagX - textX > textW - 14) break;
