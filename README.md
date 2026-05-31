@@ -3,7 +3,7 @@
 This document provides step-by-step instructions to get both the Python FastAPI backend and the React Vite frontend up and running locally.
 
 ## Prerequisites
-- **Node.js**: v20.19.0 or higher (v22 LTS recommended)
+- **Node.js**: v20.19.0 or higher (v22 LTS recommended).
 - **Python**: v3.10 or higher.
 - **Git**: (Optional) for version control.
 
