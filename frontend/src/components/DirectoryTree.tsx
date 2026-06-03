@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef, useEffect } from "react";
-import { ChevronRight, Video as VideoIcon, FileText, Sparkles, ExternalLink, ArrowUpDown, ArrowDownUp } from "lucide-react";
+import { ChevronRight, Video as VideoIcon, FileText, Sparkles, ExternalLink, ArrowUpDown, ArrowDownUp, Play } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Creative } from "@/lib/api";
 import { computeMetrics, fmtINR, fmtINR0, fmtNum, fmtPct, type ComputedMetrics } from "@/lib/metrics";
@@ -298,6 +298,137 @@ function ShareCell({ share, bold }: { share: number; bold?: boolean }) {
           className="h-full rounded-full bg-gold-gradient"
           style={{ width: `${Math.min(100, share)}%` }}
         />
+      </div>
+    </div>
+  );
+}
+
+function DirectoryHoverPreview({
+  creative,
+  hoverStyle,
+}: {
+  creative: Creative;
+  hoverStyle: React.CSSProperties;
+}) {
+  const ytId = creative.creative_type === "Video" && creative.creative_url ? getYouTubeId(creative.creative_url) : null;
+  const isImg = creative.creative_type === "Image" && !!creative.creative_url;
+  const isShort = !!creative.creative_url?.includes("/shorts/");
+
+  const previewW = isShort ? 337.5 : 480;
+  const previewH = isShort ? 600 : 270;
+
+  // Cascade high-quality thumbnails
+  const [ytThumbUrl, setYtThumbUrl] = useState(ytId ? `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg` : "");
+
+  // Auto-play timer
+  const [shouldPlay, setShouldPlay] = useState(false);
+  const [progressActive, setProgressActive] = useState(false);
+
+  useEffect(() => {
+    if (ytId) {
+      setYtThumbUrl(`https://img.youtube.com/vi/${ytId}/maxresdefault.jpg`);
+      setShouldPlay(false);
+      setProgressActive(false);
+
+      const timer = setTimeout(() => {
+        setShouldPlay(true);
+      }, 2000);
+
+      const raf = requestAnimationFrame(() => {
+        setProgressActive(true);
+      });
+
+      return () => {
+        clearTimeout(timer);
+        cancelAnimationFrame(raf);
+      };
+    }
+  }, [ytId]);
+
+  const handleThumbError = () => {
+    if (!ytId) return;
+    if (ytThumbUrl.includes("maxresdefault")) {
+      setYtThumbUrl(`https://img.youtube.com/vi/${ytId}/sddefault.jpg`);
+    } else if (ytThumbUrl.includes("sddefault")) {
+      setYtThumbUrl(`https://img.youtube.com/vi/${ytId}/hqdefault.jpg`);
+    }
+  };
+
+  return (
+    <div
+      className="fixed z-[100] pointer-events-none animate-in fade-in zoom-in-95 duration-150"
+      style={hoverStyle}
+    >
+      <div className="glass-strong rounded-2xl overflow-hidden border border-gold/30 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.8)] flex flex-col"
+           style={{ width: previewW, maxHeight: "92vh" }}>
+        <div className="bg-black/40 relative flex items-center justify-center overflow-hidden"
+             style={{ height: previewH }}>
+          {isImg && (
+            <img
+              src={creative.creative_url}
+              alt={creative.headline ?? ""}
+              className="block w-full h-full object-contain"
+            />
+          )}
+          {ytId && (
+            <>
+              {shouldPlay ? (
+                <iframe
+                  src={`https://www.youtube.com/embed/${ytId}?autoplay=1&mute=0&enablejsapi=1`}
+                  title={creative.headline ?? "Creative Preview"}
+                  frameBorder="0"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                  className="w-full h-full"
+                />
+              ) : (
+                <>
+                  <img
+                    src={ytThumbUrl}
+                    onError={handleThumbError}
+                    alt={creative.headline ?? ""}
+                    className="w-full h-full object-cover"
+                  />
+                  {/* Play icon overlay */}
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+                    <div className="w-14 h-14 rounded-full bg-black/60 border border-white/20 flex items-center justify-center
+                                    backdrop-blur-sm">
+                      <Play className="w-6 h-6 text-white fill-white ml-0.5 animate-pulse" />
+                    </div>
+                  </div>
+                  {/* Visual progress bar at bottom of thumbnail */}
+                  <div
+                    className="absolute bottom-0 left-0 h-1 bg-gold transition-all ease-linear duration-[2000ms]"
+                    style={{ width: progressActive ? "100%" : "0%" }}
+                  />
+                </>
+              )}
+            </>
+          )}
+          {creative.creative_type === "Text" && (
+            <div className="w-full h-full p-6 bg-white text-[#202124] flex flex-col justify-center gap-2">
+              <div className="text-xs flex items-center gap-1">
+                <span className="inline-block w-3 h-3 rounded-full bg-[#4285F4]" />
+                Ad · {creative.creative_url ? new URL(creative.creative_url).hostname : ""}
+              </div>
+              <div className="text-[#1a0dab] text-2xl leading-tight font-medium">{creative.headline}</div>
+              <p className="text-sm text-[#4d5156] leading-snug">{creative.description}</p>
+            </div>
+          )}
+          {!isImg && !ytId && creative.creative_type !== "Text" && (
+            <div className="w-full h-[270px] flex items-center justify-center text-muted-foreground">No preview</div>
+          )}
+        </div>
+
+        <div className="p-3 space-y-1.5 bg-background/80">
+          <div className="font-display font-semibold text-sm truncate">{creative.headline ?? creative.creative_id}</div>
+          <div className="text-[11px] text-muted-foreground flex flex-wrap gap-1.5">
+            <span className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/10">{creative.creative_type}</span>
+            <span className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/10">{creative.city}</span>
+            <span className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/10">{creative.category}</span>
+            <span className="px-1.5 py-0.5 rounded bg-gold/10 border border-gold/30 text-gold">{creative.funnel}</span>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -695,58 +826,7 @@ export function DirectoryTree({
 
       {/* ── Hover preview ─────────────────────────────────────────────────── */}
       {hover && hoverStyle && (
-        <div
-          className="fixed z-[100] pointer-events-none animate-in fade-in zoom-in-95 duration-150"
-          style={hoverStyle}
-        >
-          <div className="glass-strong rounded-2xl overflow-hidden border border-gold/30 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.8)] flex flex-col"
-               style={{ maxWidth: "min(560px, 42vw)", maxHeight: "82vh" }}>
-            <div className="bg-black/40 relative flex items-center justify-center overflow-hidden"
-                 style={{ maxHeight: "68vh" }}>
-              {hover.creative.creative_type === "Image" && (
-                <img
-                  src={hover.creative.creative_url}
-                  alt={hover.creative.headline ?? ""}
-                  className="block w-auto h-auto max-w-full object-contain"
-                  style={{ maxHeight: "68vh" }}
-                />
-              )}
-              {hover.creative.creative_type === "Video" && (() => {
-                const id = getYouTubeId(hover.creative.creative_url);
-                return id ? (
-                  <img
-                    src={`https://i.ytimg.com/vi/${id}/maxresdefault.jpg`}
-                    alt=""
-                    className="block w-auto h-auto max-w-full object-contain"
-                    style={{ maxHeight: "68vh" }}
-                  />
-                ) : (
-                  <div className="w-[480px] h-[270px] flex items-center justify-center text-muted-foreground">No preview</div>
-                );
-              })()}
-              {hover.creative.creative_type === "Text" && (
-                <div className="w-[480px] p-6 bg-white text-[#202124] flex flex-col justify-center gap-2">
-                  <div className="text-xs flex items-center gap-1">
-                    <span className="inline-block w-3 h-3 rounded-full bg-[#4285F4]" />
-                    Ad · {new URL(hover.creative.creative_url).hostname}
-                  </div>
-                  <div className="text-[#1a0dab] text-2xl leading-tight font-medium">{hover.creative.headline}</div>
-                  <p className="text-sm text-[#4d5156] leading-snug">{hover.creative.description}</p>
-                </div>
-              )}
-            </div>
-
-            <div className="p-3 space-y-1.5 bg-background/80">
-              <div className="font-display font-semibold text-sm truncate">{hover.creative.headline ?? hover.creative.creative_id}</div>
-              <div className="text-[11px] text-muted-foreground flex flex-wrap gap-1.5">
-                <span className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/10">{hover.creative.creative_type}</span>
-                <span className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/10">{hover.creative.city}</span>
-                <span className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/10">{hover.creative.category}</span>
-                <span className="px-1.5 py-0.5 rounded bg-gold/10 border border-gold/30 text-gold">{hover.creative.funnel}</span>
-              </div>
-            </div>
-          </div>
-        </div>
+        <DirectoryHoverPreview creative={hover.creative} hoverStyle={hoverStyle} />
       )}
     </div>
   );

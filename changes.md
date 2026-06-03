@@ -2,6 +2,17 @@
 
 All notable changes to the **CreativeVisibility** project will be documented in this file.
 
+## [Unreleased] - 2026-06-02 (Session 4)
+
+### Added
+- [changes.md](file:///d:/CreativeVisibility/changes.md): Documented today's performance rankings, hover previews, unmuted audio autoplay, aspect ratios, dynamic Shorts support, and row height adjustments.
+
+### Changed
+- [frontend/src/components/TopPerformers.tsx](file:///d:/CreativeVisibility/frontend/src/components/TopPerformers.tsx): Fully implemented dynamic `HoverPreview` scaling to support vertical `9:16` aspect ratios (`337.5x600px`) for YouTube Shorts. Added cascading HD thumbnails, 2-second hover autoplay with sound, and an animated gold progress countdown. Implemented aspect-ratio-aware natural-width Image thumbnails (`object-contain`) to eliminate stretch/cropping.
+- [frontend/src/components/DirectoryTree.tsx](file:///d:/CreativeVisibility/frontend/src/components/DirectoryTree.tsx): Ported unmuted hover previews to the Creative Directory tree. Implemented the isolated `DirectoryHoverPreview` helper component, which tracks coordinates independently. Added cascading high-quality thumbnails, 2-second autoplay with sound, gold progress countdown, play overlays, and dynamic 9:16 portrait vertical sizing.
+- [frontend/src/components/CreativeDetailModal.tsx](file:///d:/CreativeVisibility/frontend/src/components/CreativeDetailModal.tsx): Replaced the static video preview in the detail popup with an interactive `16:9` block featuring a gold Play button overlay. Triggering a direct click embeds an autoplaying YouTube `iframe` that guarantees unmuted audio/music playback inside the modal.
+- [frontend/src/routes/index.tsx](file:///d:/CreativeVisibility/frontend/src/routes/index.tsx): Changed the application's default initial state for `rowHeight` from `96px` to `150px` for optimal, high-resolution viewing on first load.
+
 ## [Unreleased] - 2026-05-28
 
 ### Added

@@ -158,7 +158,7 @@ function Portal() {
   const [exportOpen, setExportOpen]     = useState(false);
   const [rankMetric, setRankMetric]     = useState<"ctr" | "conversions" | "cpc" | "cpa">("ctr");
   const [mode, setMode]                 = useState<SidebarMode>("report");
-  const [rowHeight, setRowHeight]       = useState<number>(96);
+  const [rowHeight, setRowHeight]       = useState<number>(150);
   const [sortBy, setSortBy]             = useState<string | null>(null);
   const [activeKey, setActiveKey]       = useState<string>("ALL");
   const [directoryLevel, setDirectoryLevel] = useState<number>(1);
@@ -859,30 +859,53 @@ function Portal() {
           {/* ── Content ── */}
           {!loading && mode === "report" && (
             <div className="w-full space-y-5">
-              {/* ── Tab switcher ── */}
-              <div className="no-print flex items-center gap-1 p-1 rounded-xl w-fit bg-white/[0.03] border border-white/[0.06]">
-                {([
-                  { id: "directory", icon: LayoutGrid, label: "Creative Directory" },
-                  { id: "top",       icon: Trophy,     label: "Top Performers"    },
-                ] as const).map(({ id, icon: Icon, label }) => {
-                  const active = activeTab === id;
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      onClick={() => setActiveTab(id)}
-                      className={cn(
-                        "flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer",
-                        active
-                          ? "bg-gold-gradient text-[#2a1800] font-semibold shadow-[0_2px_20px_rgba(212,175,55,0.35)]"
-                          : "text-muted-foreground hover:text-foreground hover:bg-white/[0.05]",
-                      )}
-                    >
-                      <Icon className="w-4 h-4 shrink-0" />
-                      {label}
-                    </button>
-                  );
-                })}
+              {/* ── Tab switcher + contextual controls (single row) ── */}
+              <div className="no-print flex items-center gap-2 flex-wrap">
+                {/* Tab pills */}
+                <div className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                  {([
+                    { id: "directory", icon: LayoutGrid, label: "Creative Directory" },
+                    { id: "top",       icon: Trophy,     label: "Top Performers"    },
+                  ] as const).map(({ id, icon: Icon, label }) => {
+                    const active = activeTab === id;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setActiveTab(id)}
+                        className={cn(
+                          "flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer",
+                          active
+                            ? "bg-gold-gradient text-[#2a1800] font-semibold shadow-[0_2px_20px_rgba(212,175,55,0.35)]"
+                            : "text-muted-foreground hover:text-foreground hover:bg-white/[0.05]",
+                        )}
+                      >
+                        <Icon className="w-4 h-4 shrink-0" />
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Rank-by pills — only visible when Top Performers tab is active */}
+                {activeTab === "top" && (
+                  <>
+                    <span className="text-xs text-muted-foreground pl-1">Rank by:</span>
+                    {(["ctr", "conversions", "cpc", "cpa"] as const).map(m => (
+                      <button
+                        key={m}
+                        onClick={() => setRankMetric(m)}
+                        className={cn(
+                          "text-xs px-3 py-1.5 rounded-full border transition uppercase tracking-wider font-medium",
+                          rankMetric === m
+                            ? "bg-gold-gradient text-[#2a1800] border-transparent"
+                            : "border-border hover:border-gold/50",
+                        )}
+                      >{m}</button>
+                    ))}
+
+                  </>
+                )}
               </div>
 
               {/* ── Directory tab ── */}
@@ -912,20 +935,13 @@ function Portal() {
               {/* ── Top Performers tab ── */}
               {activeTab === "top" && (
                 <div>
-                  <div className="flex items-center gap-2 mb-4 no-print">
-                    <span className="text-sm text-muted-foreground">Rank by:</span>
-                    {(["ctr", "conversions", "cpc", "cpa"] as const).map(m => (
-                      <button key={m} onClick={() => setRankMetric(m)}
-                        className={cn(
-                          "text-xs px-3 py-1.5 rounded-full border transition uppercase tracking-wider font-medium",
-                          rankMetric === m
-                            ? "bg-gold-gradient text-[#2a1800] border-transparent"
-                            : "border-border hover:border-gold/50",
-                        )}
-                      >{m}</button>
-                    ))}
-                  </div>
-                  <TopPerformers rows={visibleRows} metric={rankMetric} />
+                  <TopPerformers
+                    rows={visibleRows}
+                    metric={rankMetric}
+                    rowHeight={rowHeight}
+                    dateRange={dateRangeLabel}
+                    onCreativeClick={openDetail}
+                  />
                 </div>
               )}
             </div>

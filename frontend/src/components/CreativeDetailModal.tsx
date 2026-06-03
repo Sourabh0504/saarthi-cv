@@ -8,7 +8,7 @@ import type { Creative, DailyRow } from "@/lib/api";
 import { computeMetrics, fmtINR, fmtINR0, fmtNum, fmtPct, getYouTubeId } from "@/lib/metrics";
 import {
   TrendingUp, TrendingDown, Minus, ChevronLeft, ChevronRight,
-  ArrowLeft, ArrowRight, ChevronRight as Chev, ExternalLink, Settings, FileDown, Loader2,
+  ArrowLeft, ArrowRight, ChevronRight as Chev, ExternalLink, Settings, FileDown, Loader2, Play,
 } from "lucide-react";
 import { DIM_META, type Dim } from "@/lib/hierarchy";
 import { cn, copyText } from "@/lib/utils";
@@ -184,6 +184,30 @@ export function CreativeDetailModal({
   const [modalMetrics, setModalMetrics] = useState<Record<string, boolean>>(DEFAULT_MODAL_METRICS);
   const toggleMetric = (key: string) =>
     setModalMetrics(prev => ({ ...prev, [key]: !prev[key] }));
+
+  // Video playback states
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [ytThumbUrl, setYtThumbUrl] = useState("");
+
+  const modalYtId = creative?.creative_type === "Video" && creative.creative_url ? getYouTubeId(creative.creative_url) : null;
+
+  useEffect(() => {
+    setIsPlaying(false);
+    if (modalYtId) {
+      setYtThumbUrl(`https://img.youtube.com/vi/${modalYtId}/maxresdefault.jpg`);
+    } else {
+      setYtThumbUrl("");
+    }
+  }, [creative?.creative_id, modalYtId]);
+
+  const handleThumbError = () => {
+    if (!modalYtId) return;
+    if (ytThumbUrl.includes("maxresdefault")) {
+      setYtThumbUrl(`https://img.youtube.com/vi/${modalYtId}/sddefault.jpg`);
+    } else if (ytThumbUrl.includes("sddefault")) {
+      setYtThumbUrl(`https://img.youtube.com/vi/${modalYtId}/hqdefault.jpg`);
+    }
+  };
 
   // ── Chart refs + PDF export ────────────────────────────────────────────────
   const chartRefs = {
@@ -503,12 +527,37 @@ export function CreativeDetailModal({
               />
             )}
             {creative.creative_type === "Video" && ytId && (
-              <img
-                src={`https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`}
-                alt={creative.headline ?? ""}
-                className="block max-h-[200px] w-auto max-w-[280px]"
-                style={{ objectFit: "contain" }}
-              />
+              <div className="relative w-[280px] aspect-video bg-black flex items-center justify-center">
+                {isPlaying ? (
+                  <iframe
+                    src={`https://www.youtube.com/embed/${ytId}?autoplay=1&mute=0&enablejsapi=1`}
+                    title={creative.headline ?? "Creative Video"}
+                    frameBorder="0"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    allowFullScreen
+                    className="w-full h-full"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setIsPlaying(true)}
+                    className="relative w-full h-full group/play flex items-center justify-center overflow-hidden"
+                  >
+                    <img
+                      src={ytThumbUrl}
+                      onError={handleThumbError}
+                      alt={creative.headline ?? ""}
+                      className="w-full h-full object-cover transition-transform duration-300 group-hover/play:scale-105"
+                    />
+                    <div className="absolute inset-0 bg-black/35 group-hover/play:bg-black/45 transition-colors" />
+                    {/* Play button overlay */}
+                    <div className="absolute w-14 h-14 rounded-full bg-black/60 border border-white/20 flex items-center justify-center
+                                    backdrop-blur-sm group-hover/play:scale-110 group-hover/play:bg-gold/90 group-hover/play:border-gold transition-all duration-200">
+                      <Play className="w-6 h-6 text-white group-hover/play:text-black fill-current ml-0.5" />
+                    </div>
+                  </button>
+                )}
+              </div>
             )}
             {creative.creative_type === "Image" && !creative.creative_url && (
               <div className="w-[160px] h-[160px] flex items-center justify-center text-xs text-muted-foreground">
