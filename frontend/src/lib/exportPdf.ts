@@ -828,7 +828,8 @@ export async function exportCreativePdf(data: CreativePdfData): Promise<void> {
 export type PdfTableRow =
   | { kind: "total";    count: number;  metrics: ComputedMetrics }
   | { kind: "group";    label: string;  dimLabel: string; depth: number; count: number; metrics: ComputedMetrics }
-  | { kind: "creative"; creative: Creative; metrics: ComputedMetrics; depth: number };
+  | { kind: "creative"; creative: Creative; metrics: ComputedMetrics; depth: number }
+  | { kind: "n-more";   depth: number;  hiddenCount: number; videoCount: number; imageCount: number; textCount: number; metrics: ComputedMetrics; thumbnailUrls: string[] };
 
 export interface DashboardPdfData {
   tableRows:       PdfTableRow[];
@@ -851,6 +852,19 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
   const { jsPDF } = await import("jspdf");
 
   const { tableRows, enabledColumns, hierarchyLabels, context, rowHeightPx, theme } = data;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // MULTI-PAGE STRATEGY
+  // Each page has a max height of PAGE_THRESHOLD (4800 mm, safely below the
+  // PDF spec hard-limit of ~5080 mm).  When a row would push `y` past that
+  // threshold a new page is started.  The new page opens with:
+  //   1. Compact brand header  (page number, date range)
+  //   2. Column-header bar
+  //   3. "Context" group rows  — the full ancestor-group chain of the first
+  //      row on that page, drawn in a muted style so the reader always knows
+  //      exactly where in the hierarchy they are.
+  //   4. A thin gold separator, then the actual data rows.
+  // ─────────────────────────────────────────────────────────────────────────
 
   // ── Load fonts ─────────────────────────────────────────────────────────────
   // Poppins + Montserrat don't include ₹ — also try NotoSans as a unicode fallback.
@@ -911,10 +925,53 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
   // y where content rows begin
   const START_Y    = STRIPE_H + SUBSTRIPE_H + FHD_H + COL_H + 3;
 
-  // ── Compute total page height from row content ─────────────────────────────
-  const contentH = tableRows.reduce((sum, row) =>
-    sum + (row.kind === "total" ? TOTAL_H : row.kind === "group" ? GROUP_H : CREATIVE_H), 0);
-  const PAGE_H = START_Y + contentH + FOOTER_H + MV;
+  // ── Pass 1: Compute page breaks ─────────────────────────────────────────────
+  // Max usable height per page: 4800 mm (safely below the PDF spec hard-limit
+  // of ~5,080 mm / 14 400 pt).  When a row would push `y` past this threshold
+  // a new page is started.  The new page opens with a compact brand header,
+  // column headers, and the full ancestor-group chain ("context rows") for
+  // wherever we are in the hierarchy — so readers always have full context.
+  const PAGE_THRESHOLD = 4800;
+  const COMPACT_HDR_H  = 20;   // compact brand strip height on page 2+
+
+  type GroupRowType = Extract<PdfTableRow, { kind: "group" }>;
+  interface PageDef {
+    startIdx:    number;
+    groupCtx:    GroupRowType[];  // ancestor groups to reprint at top of this page
+    pageNum:     number;
+    isFirstPage: boolean;
+  }
+
+  const pageDefs: PageDef[] = [{ startIdx: 0, groupCtx: [], pageNum: 1, isFirstPage: true }];
+  {
+    const stack: GroupRowType[] = [];
+    let cy = START_Y;
+    for (let i = 0; i < tableRows.length; i++) {
+      const r  = tableRows[i];
+      const rh = r.kind === "total" ? TOTAL_H : r.kind === "group" ? GROUP_H : CREATIVE_H; // n-more uses CREATIVE_H
+      if (cy + rh > PAGE_THRESHOLD) {
+        const ctx = [...stack];
+        pageDefs.push({ startIdx: i, groupCtx: ctx, pageNum: pageDefs.length + 1, isFirstPage: false });
+        // New page y starts after: compact header + col header + context rows
+        cy = STRIPE_H + COMPACT_HDR_H + COL_H + 3 + ctx.length * GROUP_H;
+      }
+      if (r.kind === "group") { stack.length = r.depth; stack.push(r); }
+      cy += rh;
+    }
+  }
+  const totalPages = pageDefs.length;
+
+  // ── Pass 2: Per-page heights ───────────────────────────────────────────────
+  const rowH = (r: PdfTableRow) => r.kind === "total" ? TOTAL_H : r.kind === "group" ? GROUP_H : CREATIVE_H; // n-more and creative both = CREATIVE_H
+  const pageHeights = pageDefs.map((pd, pi) => {
+    const endIdx = pageDefs[pi + 1]?.startIdx ?? tableRows.length;
+    const dataH  = tableRows.slice(pd.startIdx, endIdx).reduce((s, r) => s + rowH(r), 0);
+    const ctxH   = pd.groupCtx.length * GROUP_H;
+    const hdrH   = pd.isFirstPage ? (STRIPE_H + SUBSTRIPE_H + FHD_H) : (STRIPE_H + COMPACT_HDR_H);
+    return hdrH + COL_H + 3 + ctxH + dataH + FOOTER_H + MV;
+  });
+
+  const PAGE_H = pageHeights[0];  // used by first-page drawFooter
 
   // ── Thumbnail dimensions (left-aligned inside the label column) ────────────
   const THUMB_H = CREATIVE_H - 4;
@@ -923,29 +980,31 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
   // ── Pre-load thumbnails for all creative rows in parallel ──────────────────
   const imgMap = new Map<string, HTMLImageElement>();
   const creativeRows = tableRows.filter((r): r is Extract<PdfTableRow, { kind: "creative" }> => r.kind === "creative");
-  await Promise.all(creativeRows.map(async (r) => {
-    const c = r.creative;
-    let src: string | null = null;
-    if (c.creative_type === "Image") src = c.creative_url;
-    else if (c.creative_type === "Video") {
-      const id = getYouTubeId(c.creative_url);
-      if (id) src = `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
-    }
-    if (!src) return;
-    const img = await loadImage(src);
-    if (img) imgMap.set(c.creative_id, img);
-  }));
+  const nMoreRows    = tableRows.filter((r): r is Extract<PdfTableRow, { kind: "n-more"    }> => r.kind === "n-more");
+  await Promise.all([
+    ...creativeRows.map(async (r) => {
+      const c = r.creative;
+      let src: string | null = null;
+      if (c.creative_type === "Image") src = c.creative_url;
+      else if (c.creative_type === "Video") {
+        const id = getYouTubeId(c.creative_url);
+        if (id) src = `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+      }
+      if (!src) return;
+      const img = await loadImage(src);
+      if (img) imgMap.set(c.creative_id, img);
+    }),
+    // Pre-load collage thumbnails for n-more rows
+    ...nMoreRows.flatMap(r =>
+      r.thumbnailUrls.map(async (src, idx) => {
+        const img = await loadImage(src);
+        if (img) imgMap.set(`__nmore_${r.depth}_${idx}_${src}`, img);
+      })
+    ),
+  ]);
 
-  // ── Create single-page PDF with computed height ────────────────────────────
-  // jsPDF normalizes `format` to match `orientation` (it will swap width/height
-  // if they don't agree). PW is fixed at 297mm; PAGE_H grows with content and
-  // can be shorter than PW when there are few rows (e.g. level-1 listing).
-  // Pick orientation from the actual dims so width stays = PW and height = PAGE_H.
-  const pdf = new jsPDF({
-    orientation: PAGE_H >= PW ? "portrait" : "landscape",
-    unit: "mm",
-    format: [PW, PAGE_H],
-  });
+  // ── Create PDF — first page height; further pages added in the render loop ─
+  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: [PW, PAGE_H] });
 
   const FONT  = fonts.poppinsR    ? "poppins"    : (notoB64Dash ? "notosans" : "helvetica");
   const FONTD = fonts.montserratB ? "montserrat" : (notoB64Dash ? "notosans" : "helvetica");
@@ -1063,24 +1122,28 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
     tx(context.selectionLabel, PW - MH, stripY + 1.5, 6.5, GOLD, true, "right");
   };
 
-  // footer (bottom of document — single occurrence)
-  const drawFooter = () => {
-    const fy = PAGE_H - MV - FOOTER_H + 6;
-    // Top gold hairline + subtle border above the footer block
-    ln(MH, PAGE_H - MV - FOOTER_H, MH + CW, PAGE_H - MV - FOOTER_H, GOLD, 0.3);
-    ln(MH, PAGE_H - MV - FOOTER_H + 1.2, MH + CW, PAGE_H - MV - FOOTER_H + 1.2, BDR, 0.12);
-    tx("CreativeVisibility  ·  Confidential", MH, fy, 5.5, MUTED, true);
-    tx(safe(`${context.selectedCount} creatives  ·  ${fd(si)} → ${fd(ei)}`),
-       PW - MH, fy, 5.5, MUTED, false, "right");
-    tx("© 2026 CreativeVisibility. All rights reserved.",
-       PW / 2, fy, 5.5, MUTED, false, "center");
+  // ── Compact header — page 2+ ─────────────────────────────────────────────
+  const drawCompactHeader = (pgNum: number) => {
+    fR(0, 0, PW, STRIPE_H, GOLD);
+    fR(0, STRIPE_H, PW, COMPACT_HDR_H, HDR);
+    ln(0, STRIPE_H + COMPACT_HDR_H, PW, STRIPE_H + COMPACT_HDR_H, GOLD, 0.35);
+    tx("CreativeVisibility",             MH,      STRIPE_H + 8,  12, GOLD,  true,  "left", true);
+    tx(safe(`${fd(si)}  →  ${fd(ei)}`), MH,      STRIPE_H + 14, 5.5,MUTED, false, "left");
+    tx(`Page ${pgNum} of ${totalPages}`, PW / 2,  STRIPE_H + 11, 7,  MUTED, false, "center");
+    tx(context.selectionLabel,           PW - MH, STRIPE_H + 8,  6,  GOLD,  true,  "right");
+    tx(`${context.selectedCount} creatives`, PW - MH, STRIPE_H + 14, 5.5, MUTED, false, "right");
   };
 
-  // ── Draw document ──────────────────────────────────────────────────────────
-  fR(0, 0, PW, PAGE_H, BG);   // page background
-  drawHeader();
-  drawColHdr(STRIPE_H + SUBSTRIPE_H + FHD_H);
-  let y = START_Y;
+  // ── Footer — one per page ─────────────────────────────────────────────────
+  const drawFooter = (pgH: number, pgNum: number) => {
+    const fy = pgH - MV - FOOTER_H + 6;
+    ln(MH, pgH - MV - FOOTER_H,       MH + CW, pgH - MV - FOOTER_H,       GOLD, 0.3);
+    ln(MH, pgH - MV - FOOTER_H + 1.2, MH + CW, pgH - MV - FOOTER_H + 1.2, BDR,  0.12);
+    tx("CreativeVisibility  ·  Confidential", MH, fy, 5.5, MUTED, true);
+    if (totalPages > 1) tx(`Page ${pgNum} of ${totalPages}`, PW / 2, fy, 5.5, MUTED, false, "center");
+    tx(safe(`${context.selectedCount} creatives  ·  ${fd(si)} – ${fd(ei)}`),
+       PW - MH, fy, 5.5, MUTED, false, "right");
+  };
 
   // ── Tree-connector helpers ─────────────────────────────────────────────────
   // Determines whether, scanning forward from row i, a later row at depth
@@ -1120,8 +1183,87 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
     ln(railX, midY, labelX - 0.5, midY, TREE, 0.25);
   };
 
-  for (let i = 0; i < tableRows.length; i++) {
-    const row = tableRows[i];
+  // ── Helper: draw one group row (shared by data rows and context rows) ───────
+  const drawGroupRowAt = (row: GroupRowType, y: number, isContext: boolean) => {
+    const d = Math.min(row.depth, GBG.length - 1);
+    fR(MH, y, CW, GROUP_H, GBG[d]);
+    if (row.depth === 0) { fR(MH, y, 3, GROUP_H, GOLD); }
+    else                 { fR(MH, y, 1, GROUP_H, BDR);  }
+    ln(MH, y + GROUP_H, MH + CW, y + GROUP_H, BDR, 0.18);
+
+    const ix   = MH + 4 + row.depth * INDENT;
+    const lsz  = row.depth === 0 ? 8.5 : row.depth === 1 ? 7.5 : 7;
+    const lbd  = row.depth <= 1;
+    const my   = y + GROUP_H / 2 + lsz * 0.3528 * 0.36;
+    const arrowCol: readonly [number,number,number] = row.depth === 0 ? GOLD : MUTED;
+    const aSize = row.depth === 0 ? 2.4 : 2.0;
+    const aCy   = y + GROUP_H / 2;
+
+    if (isContext) {
+      // Context rows: muted text, "↩" icon, no count badge, no metrics
+      pdf.setFillColor(MUTED[0], MUTED[1], MUTED[2]);
+      pdf.triangle(ix, aCy - aSize, ix, aCy + aSize, ix + aSize * 1.6, aCy, "F");
+      tx(row.label, ix + 5.5, my, lsz, MUTED, false);
+    } else {
+      pdf.setFillColor(arrowCol[0], arrowCol[1], arrowCol[2]);
+      pdf.triangle(ix, aCy - aSize, ix, aCy + aSize, ix + aSize * 1.6, aCy, "F");
+      tx(row.label, ix + 5.5, my, lsz, TEXT, lbd);
+      // Count badge
+      pdf.setFont(FONT, lbd ? "bold" : "normal"); pdf.setFontSize(lsz);
+      const labelTextW = pdf.getTextWidth(row.label);
+      pdf.setFontSize(6);
+      const cBx = ix + 5.5 + labelTextW + 3.5;
+      if (cBx + 16 < MH + LABEL_W) {
+        const CBD: readonly[number,number,number] = theme === "dark" ? [30,30,42] : [218,218,235];
+        pdf.setFillColor(CBD[0],CBD[1],CBD[2]);
+        pdf.setDrawColor(BDR[0],BDR[1],BDR[2]); pdf.setLineWidth(0.15);
+        const cBw = pdf.getTextWidth(String(row.count)) + 5;
+        pdf.roundedRect(cBx, y + GROUP_H/2 - 2.5, cBw, 5, 1, 1, "FD");
+        tx(String(row.count), cBx + 2.5, y + GROUP_H/2 + 1.2, 6, MUTED);
+      }
+      drawMetrics(row.metrics, y, GROUP_H, lbd, false);
+    }
+    drawVSep(y, GROUP_H);
+  };
+
+  // ── Multi-page render loop ────────────────────────────────────────────────
+  for (let pi = 0; pi < pageDefs.length; pi++) {
+    const pd     = pageDefs[pi];
+    const endIdx = pageDefs[pi + 1]?.startIdx ?? tableRows.length;
+    const pgH    = pageHeights[pi];
+
+    // Add new PDF page for pages 2+ (first page already created)
+    if (pi > 0) pdf.addPage([PW, pgH]);
+
+    // Page background
+    fR(0, 0, PW, pgH, BG);
+
+    // Header
+    if (pd.isFirstPage) {
+      drawHeader();
+    } else {
+      drawCompactHeader(pd.pageNum);
+    }
+
+    // Column headers
+    const hdrBottom = pd.isFirstPage ? (STRIPE_H + SUBSTRIPE_H + FHD_H) : (STRIPE_H + COMPACT_HDR_H);
+    drawColHdr(hdrBottom);
+    let y = hdrBottom + COL_H + 3;
+
+    // Context group rows (only on continuation pages)
+    if (!pd.isFirstPage && pd.groupCtx.length > 0) {
+      for (const ctxRow of pd.groupCtx) {
+        drawGroupRowAt(ctxRow, y, true);
+        y += GROUP_H;
+      }
+      // Thin gold separator between context and fresh data
+      ln(MH, y, MH + CW, y, GOLD, 0.25);
+      y += 0.5;
+    }
+
+    // Data rows for this page
+    for (let i = pd.startIdx; i < endIdx; i++) {
+      const row = tableRows[i];
 
 
     // TOTAL row
@@ -1150,54 +1292,84 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
 
     // Group row
     } else if (row.kind === "group") {
-      const d = Math.min(row.depth, GBG.length-1);
-      fR(MH, y, CW, GROUP_H, GBG[d]);
-      // Only depth-0 gets the prominent gold left bar; deeper rows get a thin neutral line
-      if (row.depth === 0) {
-        fR(MH, y, 3, GROUP_H, GOLD);
-      } else {
-        fR(MH, y, 1, GROUP_H, BDR);
-      }
-      ln(MH, y+GROUP_H, MH+CW, y+GROUP_H, BDR, 0.18);
-
-      // Tree connectors (├─ │ └─) in the indent gutter
       drawTreeConnectors(i, row.depth, y, GROUP_H);
-
-      const ix = MH + 4 + row.depth * INDENT;
-      const lsz = row.depth === 0 ? 8.5 : row.depth === 1 ? 7.5 : 7;
-      const lbd = row.depth <= 1;
-      // Baseline that puts the glyph's visual middle exactly on the row centerline.
-      // pt→mm = 0.3528; cap-height ≈ 0.72 of font size; visual middle ≈ baseline - cap/2.
-      const my = y + GROUP_H / 2 + lsz * 0.3528 * 0.36;
-      const arrowCol: readonly[number,number,number] = row.depth === 0 ? GOLD : MUTED;
-      // Filled triangle (▸) — vector, centered on the row's mid-line so it
-      // lines up with both the elbow connector and the label.
-      const aSize = row.depth === 0 ? 2.4 : 2.0;
-      const aX = ix;
-      const aCy = y + GROUP_H / 2;
-      pdf.setFillColor(arrowCol[0], arrowCol[1], arrowCol[2]);
-      pdf.triangle(aX, aCy - aSize, aX, aCy + aSize, aX + aSize * 1.6, aCy, "F");
-
-      tx(row.label, ix + 5.5, my, lsz, TEXT, lbd);
-
-
-      // Measure label width at same font/size used to draw it
-      pdf.setFont(FONT, lbd ? "bold" : "normal"); pdf.setFontSize(lsz);
-      const labelTextW = pdf.getTextWidth(row.label);
-      pdf.setFontSize(6);
-      const cBx = ix + 5.5 + labelTextW + 3.5;
-      if (cBx + 16 < MH + LABEL_W) {
-        const CBD: readonly[number,number,number] = theme==="dark" ? [30,30,42] as const : [218,218,235] as const;
-        pdf.setFillColor(CBD[0],CBD[1],CBD[2]);
-        pdf.setDrawColor(BDR[0],BDR[1],BDR[2]);
-        pdf.setLineWidth(0.15);
-        const cBw = pdf.getTextWidth(String(row.count)) + 5;
-        pdf.roundedRect(cBx, y+GROUP_H/2-2.5, cBw, 5, 1, 1, "FD");
-        tx(String(row.count), cBx+2.5, y+GROUP_H/2+1.2, 6, MUTED);
-      }
-      drawMetrics(row.metrics, y, GROUP_H, lbd, false);
-      drawVSep(y, GROUP_H);
+      drawGroupRowAt(row, y, false);
       y += GROUP_H;
+
+    // N-More collapsed summary row
+    } else if (row.kind === "n-more") {
+      const NMBG: readonly [number,number,number] = theme === "dark" ? [14, 13, 18] : [248, 248, 252];
+      fR(MH, y, CW, CREATIVE_H, NMBG);
+      // Dashed top border to distinguish from regular rows
+      pdf.setDrawColor(BDR[0], BDR[1], BDR[2]); pdf.setLineWidth(0.2);
+      pdf.setLineDashPattern([1, 1.5], 0);
+      pdf.line(MH, y, MH + CW, y);
+      pdf.setLineDashPattern([], 0);
+      ln(MH, y + CREATIVE_H, MH + CW, y + CREATIVE_H, BDR, 0.12);
+      drawVSep(y, CREATIVE_H);
+      drawTreeConnectors(i, row.depth, y, CREATIVE_H);
+
+      const ix       = MH + 4 + row.depth * INDENT;
+      const thumbY   = y + (CREATIVE_H - THUMB_H) / 2;
+      // 2×2 grid collage — same square footprint as a normal image creative
+      const collageSize = THUMB_H;  // square
+      const half        = (collageSize - 0.5) / 2; // each cell width/height
+      const show        = Math.min(4, row.thumbnailUrls.length);
+      const extra       = row.thumbnailUrls.length - show;
+      // Background fill for the whole square
+      fR(ix, thumbY, collageSize, collageSize, theme === "dark" ? [8,8,12] : [240,240,245]);
+      pdf.setDrawColor(BDR[0],BDR[1],BDR[2]); pdf.setLineWidth(0.12);
+      pdf.rect(ix, thumbY, collageSize, collageSize);
+      for (let si = 0; si < show; si++) {
+        const col  = si % 2;
+        const row2 = Math.floor(si / 2);
+        const cx   = ix    + col   * (half + 0.5);
+        const cy   = thumbY + row2  * (half + 0.5);
+        const src  = row.thumbnailUrls[si];
+        const key  = `__nmore_${row.depth}_${si}_${src}`;
+        const img  = imgMap.get(key);
+        fR(cx, cy, half, half, theme === "dark" ? [12,12,18] : [235,235,240]);
+        if (img) {
+          const iw = img.naturalWidth  || img.width  || 1;
+          const ih = img.naturalHeight || img.height || 1;
+          const sr = half / half; // square slot
+          const ir = iw / ih;
+          let dw = half, dh = half;
+          if (ir > sr) { dh = half / ir; } else { dw = half * ir; }
+          try {
+            pdf.addImage(img, "JPEG", cx + (half - dw) / 2, cy + (half - dh) / 2, dw, dh, undefined, "FAST");
+          } catch { /* skip */ }
+        }
+        if (si === show - 1 && extra > 0) {
+          const OVL: readonly[number,number,number] = [10, 10, 14];
+          fR(cx, cy, half, half, OVL);
+          tx(`+${extra + 1}`, cx + half / 2, cy + half / 2 + 2, 7.5, [240, 240, 245] as const, true, "center");
+        }
+      }
+
+      // Info: "N more creatives"
+      const infoX = ix + collageSize + 3;
+      const midY  = y + CREATIVE_H / 2;
+      tx(`${row.hiddenCount} more creatives`, infoX, midY - 1.5, 7.5, MUTED as readonly[number,number,number], true);
+      // Type pills
+      const pills: string[] = [];
+      if (row.videoCount > 0) pills.push(`${row.videoCount} Video${row.videoCount !== 1 ? "s" : ""}`);
+      if (row.imageCount > 0) pills.push(`${row.imageCount} Image${row.imageCount !== 1 ? "s" : ""}`);
+      if (row.textCount  > 0) pills.push(`${row.textCount} Text`);
+      let px = infoX;
+      for (const pill of pills) {
+        pdf.setFontSize(5.5); pdf.setFont(FONT, "normal");
+        const pw = pdf.getTextWidth(pill) + 4;
+        const PILL_BG: readonly[number,number,number] = theme === "dark" ? [28, 26, 18] : [248, 244, 230];
+        pdf.setFillColor(PILL_BG[0], PILL_BG[1], PILL_BG[2]);
+        pdf.setDrawColor(GOLD[0], GOLD[1], GOLD[2]); pdf.setLineWidth(0.15);
+        pdf.roundedRect(px, midY + 2, pw, 4.5, 0.8, 0.8, "FD");
+        tx(pill, px + 2, midY + 5.5, 5.5, GOLD);
+        px += pw + 2;
+      }
+
+      drawMetrics(row.metrics, y, CREATIVE_H, false, false);
+      y += CREATIVE_H;
 
     // Creative row (with thumbnail on the left)
     } else {
@@ -1336,9 +1508,11 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
       drawMetrics(metrics, y, CREATIVE_H, false, false);
       y += CREATIVE_H;
     }
-  }
+    }  // end data-rows loop
 
-  drawFooter();
+    drawFooter(pgH, pd.pageNum);
+  }  // end page loop
+
   pdf.save(`CreativeVisibility_Report_${si}_to_${ei}.pdf`);
 }
 

@@ -2,6 +2,36 @@
 
 All notable changes to the **CreativeVisibility** project will be documented in this file.
 
+## [Unreleased] - 2026-06-04 (Session 6)
+
+### Added
+- [frontend/src/components/DirectoryTree.tsx](file:///d:/CreativeVisibility/frontend/src/components/DirectoryTree.tsx): Threshold filter system — `FlatItem` union type, `insertNMoreRows()` function (2-case logic: metric threshold + min-per-group), `NMoreCollage` component (landscape filmstrip of 3-4 thumbnails with +N overflow badge). New props: `thresholdEnabled`, `thresholdMetric`, `thresholdValue`, `minVisiblePerGroup`, `expandedNMore`, `onExpandedNMoreChange`.
+- [frontend/src/routes/index.tsx](file:///d:/CreativeVisibility/frontend/src/routes/index.tsx): Threshold state (`thresholdEnabled`, `thresholdMetric`, `thresholdValue`, `minVisiblePerGroup`, `expandedNMore`). Inline controls in the Creative Directory tab bar: on/off toggle, metric dropdown (Impr./Spend), threshold number input (default 100), min-per-group number input (default 5). Controls are dimmed/disabled when filter is off.
+- [frontend/src/lib/exportPdf.ts](file:///d:/CreativeVisibility/frontend/src/lib/exportPdf.ts): `n-more` variant added to `PdfTableRow` union type. PDF draw loop renders collapsed N-More rows with thumbnail collage (up to 4 images side-by-side, +N overflow), type pills (N Videos / N Images / N Text), and muted summed metrics. PDF mirrors exact dashboard expand/collapse state.
+
+### Changed
+- [frontend/src/routes/index.tsx](file:///d:/CreativeVisibility/frontend/src/routes/index.tsx): `buildPdfTableRows()` upgraded — accepts `ThresholdPdfConfig` (enabled, metric, value, minVisible, expandedNMore). Applies same 2-case threshold logic per leaf group; produces `n-more` PDF rows for collapsed groups, individual rows for expanded groups. `handleExportPDF` passes current threshold state to builder.
+- [frontend/src/components/DirectoryTree.tsx](file:///d:/CreativeVisibility/frontend/src/components/DirectoryTree.tsx): `flat` useMemo switched from `AggNode[]` to `FlatItem[]`. `estimateSize`, `getItemKey`, and render loop all updated to handle `n-more` and `n-more-header` item types. Group/total metrics are never affected by threshold — data integrity is preserved.
+
+### Behaviour
+- Default: filter OFF (100 Impr threshold, min 5 per group, both configurable).
+- When enabled: creatives below threshold are hidden per group; top N (min-per-group) are always kept visible regardless of threshold.
+- Hidden creatives collapse into a single "N more creatives" row showing a thumbnail collage, type count pills (Videos/Images/Text), and the summed + recalculated metrics of hidden creatives.
+- Clicking the row expands inline; the N-more header shows a collapse trigger with no metrics (preventing double-counting).
+- Compare mode: compare deltas only appear on individually visible rows; the N-more summary row shows primary-period metrics only.
+- PDF export mirrors dashboard state exactly — collapsed groups export as N-more rows, expanded groups export all individual rows.
+
+## [Unreleased] - 2026-06-03 (Session 5)
+
+### Added
+- [frontend/src/lib/exportTopPerformersPdf.ts](file:///d:/CreativeVisibility/frontend/src/lib/exportTopPerformersPdf.ts): Created a new landscape A4 multi-page PDF generation module for the Top Performers view. Dynamically scales row height and thumbnail size based on the UI's `rowHeight` pixel slider, and calculates total page height to export a seamless single-page document.
+- Added a "Download PDF" button to the Top Performers view (`TopPerformers.tsx`).
+- Added clickable external URL links (`pdf.link()`) embedded directly into PDF rows and in dashboard cards.
+
+### Changed
+- [frontend/src/components/TopPerformers.tsx](file:///d:/CreativeVisibility/frontend/src/components/TopPerformers.tsx): Enhanced card text layout for details block. Increased font size (`text-[14px]`), font weight (`font-bold`), and styled tags using "shades of white" (`text-white/90`, `text-white/80`, `text-white/70`) for a premium "fat and bold" dark theme look.
+- [frontend/src/lib/exportTopPerformersPdf.ts](file:///d:/CreativeVisibility/frontend/src/lib/exportTopPerformersPdf.ts): Details column text perfectly mirrors the bold, shades-of-white dashboard styling, and remains vertically centered regardless of row height scaling.
+
 ## [Unreleased] - 2026-06-02 (Session 4)
 
 ### Added

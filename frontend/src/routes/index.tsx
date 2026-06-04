@@ -74,22 +74,90 @@ const COL_LABELS: Record<string, string> = {
 // ─────────────────────────────────────────────────────────────────────────────
 // Build flat PDF table rows from the current hierarchy (for exportDashboardPdf)
 // ─────────────────────────────────────────────────────────────────────────────
+interface ThresholdPdfConfig {
+  enabled:        boolean;
+  metric:         "impressions" | "cost";
+  value:          number;
+  minVisible:     number;
+  expandedNMore:  Set<string>;
+}
+
 function buildPdfTableRows(
-  rows:     Array<{ creative: Creative; metrics: ComputedMetrics }>,
+  rows:      Array<{ creative: Creative; metrics: ComputedMetrics }>,
   hierarchy: Dim[],
-  totals:   ComputedMetrics,
+  totals:    ComputedMetrics,
   includeCreatives: boolean,
+  threshold?: ThresholdPdfConfig,
 ): PdfTableRow[] {
   const result: PdfTableRow[] = [{ kind: "total", count: rows.length, metrics: totals }];
 
-  const recurse = (items: typeof rows, dims: Dim[], depth: number) => {
+  const getYtId = (url: string) => url.match(/(?:youtu\.be\/|v=|embed\/)([\w-]{11})/)?.[1] ?? null;
+
+  const recurse = (items: typeof rows, dims: Dim[], depth: number, groupKey: string) => {
     if (dims.length === 0 || items.length === 0) {
       if (!includeCreatives) return;
+
+      // Apply threshold if enabled
+      if (threshold?.enabled && threshold.value > 0) {
+        const getVal = (r: typeof rows[0]) =>
+          threshold.metric === "impressions" ? r.metrics.impressions : r.metrics.cost;
+        const effectiveMin = Math.min(threshold.minVisible, items.length);
+        const above = items.filter(r => getVal(r) >= threshold.value);
+        const below = [...items.filter(r => getVal(r) < threshold.value)]
+                        .sort((a, b) => getVal(b) - getVal(a));
+
+        let visibleSet: Set<string>;
+        let hidden: typeof rows;
+        if (above.length >= effectiveMin) {
+          visibleSet = new Set(above.map(r => r.creative.creative_id));
+          hidden = below;
+        } else {
+          const needMore = effectiveMin - above.length;
+          visibleSet = new Set([...above, ...below.slice(0, needMore)].map(r => r.creative.creative_id));
+          hidden = below.slice(needMore);
+        }
+
+        for (const item of items) {
+          if (visibleSet.has(item.creative.creative_id)) {
+            result.push({ kind: "creative", creative: item.creative, metrics: item.metrics, depth });
+          }
+        }
+
+        if (hidden.length > 0) {
+          const nMoreKey = `nmore:${groupKey}`;
+          const isExpanded = threshold.expandedNMore.has(nMoreKey);
+          if (isExpanded) {
+            for (const item of hidden) {
+              result.push({ kind: "creative", creative: item.creative, metrics: item.metrics, depth });
+            }
+          } else {
+            const videoCount = hidden.filter(r => r.creative.creative_type === "Video").length;
+            const imageCount = hidden.filter(r => r.creative.creative_type === "Image").length;
+            const textCount  = hidden.filter(r => r.creative.creative_type === "Text").length;
+            const hMetrics = computeMetrics(hidden.reduce(
+              (acc, r) => ({ impressions: acc.impressions + r.metrics.impressions, clicks: acc.clicks + r.metrics.clicks, cost: acc.cost + r.metrics.cost, conversions: acc.conversions + r.metrics.conversions }),
+              { impressions: 0, clicks: 0, cost: 0, conversions: 0 },
+            ));
+            const thumbUrls = hidden.slice(0, 4).map(r => {
+              if (r.creative.creative_type === "Video") {
+                const id = getYtId(r.creative.creative_url ?? "");
+                return id ? `https://i.ytimg.com/vi/${id}/default.jpg` : "";
+              }
+              return r.creative.creative_url ?? "";
+            }).filter(Boolean);
+            result.push({ kind: "n-more", depth, hiddenCount: hidden.length, videoCount, imageCount, textCount, metrics: hMetrics, thumbnailUrls: thumbUrls });
+          }
+        }
+        return;
+      }
+
+      // No threshold — all rows
       for (const item of items) {
         result.push({ kind: "creative", creative: item.creative, metrics: item.metrics, depth });
       }
       return;
     }
+
     const [dim, ...rest] = dims;
     const getVal = DIM_META[dim].get;
     const groups = new Map<string, typeof rows>();
@@ -98,7 +166,6 @@ function buildPdfTableRows(
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(item);
     }
-    // sort groups by cost desc
     const sorted = [...groups.entries()].sort(
       ([, a], [, b]) =>
         b.reduce((s, r) => s + r.metrics.cost, 0) -
@@ -116,12 +183,13 @@ function buildPdfTableRows(
           { impressions: 0, clicks: 0, cost: 0, conversions: 0 },
         ),
       );
+      const childKey = `${groupKey}>${dim}:${label}`;
       result.push({ kind: "group", label, dimLabel: DIM_META[dim].label, depth, count: group.length, metrics: gm });
-      recurse(group, rest, depth + 1);
+      recurse(group, rest, depth + 1, childKey);
     }
   };
 
-  recurse(rows, hierarchy, 0);
+  recurse(rows, hierarchy, 0, "root");
   return result;
 }
 
@@ -164,6 +232,13 @@ function Portal() {
   const [directoryLevel, setDirectoryLevel] = useState<number>(1);
   const [pdfLoading, setPdfLoading]     = useState(false);
   const [activeTab, setActiveTab]       = useState<"directory" | "top">("directory");
+
+  // ── Threshold filter ──────────────────────────────────────────────────────
+  const [thresholdEnabled,    setThresholdEnabled]    = useState(false);
+  const [thresholdMetric,     setThresholdMetric]     = useState<"impressions" | "cost">("impressions");
+  const [thresholdValue,      setThresholdValue]      = useState(100);
+  const [minVisiblePerGroup,  setMinVisiblePerGroup]  = useState(5);
+  const [expandedNMore,       setExpandedNMore]       = useState<Set<string>>(new Set());
 
   // ── Raw data (loaded once, aggregated client-side) ────────────────────────────────
   const [rawDimensions, setRawDimensions] = useState<CreativeDimensionMap>({});
@@ -589,7 +664,13 @@ function Portal() {
     const exportHierarchy = includeCreatives
       ? hierarchy
       : hierarchy.slice(0, Math.min(directoryLevel + 1, hierarchy.length));
-    const tableRows = buildPdfTableRows(exportRows, exportHierarchy, exportTotals, includeCreatives);
+    const tableRows = buildPdfTableRows(exportRows, exportHierarchy, exportTotals, includeCreatives, {
+      enabled:       thresholdEnabled,
+      metric:        thresholdMetric,
+      value:         thresholdValue,
+      minVisible:    minVisiblePerGroup,
+      expandedNMore,
+    });
 
     try {
       await exportDashboardPdf({
@@ -903,8 +984,63 @@ function Portal() {
                         )}
                       >{m}</button>
                     ))}
-
                   </>
+                )}
+
+                {/* Threshold filter controls — only visible when Creative Directory tab is active */}
+                {activeTab === "directory" && (
+                  <div className="flex items-center gap-2 ml-auto flex-wrap">
+                    {/* Enable/disable toggle */}
+                    <button
+                      type="button"
+                      onClick={() => setThresholdEnabled(e => !e)}
+                      title={thresholdEnabled ? "Disable threshold filter" : "Enable threshold filter — hides low-data creatives"}
+                      className={cn(
+                        "flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg border transition-all font-medium",
+                        thresholdEnabled
+                          ? "border-gold/40 bg-gold/10 text-gold"
+                          : "border-border text-muted-foreground hover:text-foreground hover:border-white/20",
+                      )}
+                    >
+                      <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 4h18M7 12h10M11 20h2" />
+                      </svg>
+                      {thresholdEnabled ? "Filter On" : "Filter Off"}
+                    </button>
+
+                    {/* Controls — dimmed when disabled */}
+                    <div className={cn(
+                      "flex items-center gap-1.5 transition-opacity",
+                      !thresholdEnabled && "opacity-40 pointer-events-none select-none",
+                    )}>
+                      <span className="text-[11px] text-muted-foreground whitespace-nowrap">Min.</span>
+                      <select
+                        value={thresholdMetric}
+                        onChange={e => setThresholdMetric(e.target.value as "impressions" | "cost")}
+                        className="text-[11px] bg-background border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
+                      >
+                        <option value="impressions">Impr.</option>
+                        <option value="cost">Spend</option>
+                      </select>
+                      <span className="text-[11px] text-muted-foreground">&lt;</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={thresholdValue}
+                        onChange={e => setThresholdValue(Math.max(0, parseInt(e.target.value) || 0))}
+                        className="text-[11px] bg-background border border-border rounded px-2 py-1 w-16 text-right tabular-nums text-foreground"
+                      />
+                      <span className="text-[11px] text-muted-foreground/40 mx-0.5">|</span>
+                      <span className="text-[11px] text-muted-foreground whitespace-nowrap">Min/group</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={minVisiblePerGroup}
+                        onChange={e => setMinVisiblePerGroup(Math.max(1, parseInt(e.target.value) || 1))}
+                        className="text-[11px] bg-background border border-border rounded px-2 py-1 w-10 text-right tabular-nums text-foreground"
+                      />
+                    </div>
+                  </div>
                 )}
               </div>
 
@@ -927,6 +1063,12 @@ function Portal() {
                       compareMode={filters.compareMode}
                       compareMetrics={compareMetricsMap ?? undefined}
                       compareTotals={compareTotals ?? undefined}
+                      thresholdEnabled={thresholdEnabled}
+                      thresholdMetric={thresholdMetric}
+                      thresholdValue={thresholdValue}
+                      minVisiblePerGroup={minVisiblePerGroup}
+                      expandedNMore={expandedNMore}
+                      onExpandedNMoreChange={setExpandedNMore}
                     />
                   )}
                 </div>

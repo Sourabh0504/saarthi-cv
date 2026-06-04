@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef, useEffect } from "react";
-import { ChevronRight, Video as VideoIcon, FileText, Sparkles, ExternalLink, ArrowUpDown, ArrowDownUp, Play } from "lucide-react";
+import { ChevronRight, ChevronDown, Video as VideoIcon, FileText, Sparkles, ExternalLink, ArrowUpDown, ArrowDownUp, Play } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Creative } from "@/lib/api";
 import { computeMetrics, fmtINR, fmtINR0, fmtNum, fmtPct, type ComputedMetrics } from "@/lib/metrics";
@@ -26,6 +26,13 @@ interface Props {
   compareMode?:      boolean;
   compareMetrics?:   Map<string, ComputedMetrics>; // per creative_id
   compareTotals?:    ComputedMetrics;              // for TOTAL strip
+  // Threshold filter
+  thresholdEnabled?:       boolean;
+  thresholdMetric?:        "impressions" | "cost";
+  thresholdValue?:         number;
+  minVisiblePerGroup?:     number;
+  expandedNMore?:          Set<string>;
+  onExpandedNMoreChange?:  (s: Set<string>) => void;
 }
 
 interface AggNode {
@@ -40,6 +47,29 @@ interface AggNode {
   creative?:       Creative;
   share?:          number; // % of cost within peer group at same level (0–100)
 }
+
+// ── Flat virtual-row types ────────────────────────────────────────────────────
+type FlatItem =
+  | { kind: "node"; node: AggNode }
+  | {
+      kind:       "n-more";
+      key:        string;
+      groupKey:   string;
+      hiddenRows: Row[];
+      metrics:    ComputedMetrics;
+      videoCount: number;
+      imageCount: number;
+      textCount:  number;
+      depth:      number;
+    }
+  | {
+      kind:       "n-more-header";
+      key:        string;
+      groupKey:   string;
+      hiddenCount: number;
+      hiddenNodes: AggNode[];
+      depth:      number;
+    };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -152,9 +182,150 @@ function flattenTree(tree: AggNode[], open: Set<string>): AggNode[] {
   return out;
 }
 
+function getParentKey(nodeKey: string): string {
+  const idx = nodeKey.lastIndexOf(">");
+  return idx >= 0 ? nodeKey.slice(0, idx) : "root";
+}
+
+function insertNMoreRows(
+  flat:               AggNode[],
+  rows:               Row[],
+  thresholdMetric:    "impressions" | "cost",
+  thresholdValue:     number,
+  minVisiblePerGroup: number,
+  expandedNMore:      Set<string>,
+): FlatItem[] {
+  const rowMap = new Map(rows.map(r => [r.creative.creative_id, r]));
+  const result: FlatItem[] = [];
+  let i = 0;
+
+  while (i < flat.length) {
+    const node = flat[i];
+
+    if (node.dim !== "creative") {
+      result.push({ kind: "node", node });
+      i++;
+      continue;
+    }
+
+    // Collect consecutive creative siblings sharing the same parent key
+    const parentKey = getParentKey(node.key);
+    const creativeGroup: AggNode[] = [];
+    while (i < flat.length && flat[i].dim === "creative" && getParentKey(flat[i].key) === parentKey) {
+      creativeGroup.push(flat[i]);
+      i++;
+    }
+
+    const getVal = (n: AggNode) =>
+      thresholdMetric === "impressions" ? n.metrics.impressions : n.metrics.cost;
+
+    const effectiveMin = Math.min(minVisiblePerGroup, creativeGroup.length);
+    const above = creativeGroup.filter(n => getVal(n) >= thresholdValue);
+    const below = creativeGroup.filter(n => getVal(n) < thresholdValue)
+                               .sort((a, b) => getVal(b) - getVal(a)); // best-first
+
+    let visibleSet: Set<string>;
+    let hidden: AggNode[];
+
+    if (above.length >= effectiveMin) {
+      visibleSet = new Set(above.map(n => n.key));
+      hidden = below;
+    } else {
+      const needMore  = effectiveMin - above.length;
+      const promoted  = below.slice(0, needMore);
+      hidden          = below.slice(needMore);
+      visibleSet      = new Set([...above, ...promoted].map(n => n.key));
+    }
+
+    // Emit visible creative nodes in their original display order
+    for (const n of creativeGroup) {
+      if (visibleSet.has(n.key)) result.push({ kind: "node", node: n });
+    }
+
+    if (hidden.length === 0) continue;
+
+    const depth      = node.depth;
+    const nMoreKey   = `nmore:${parentKey}`;
+    const hiddenRows = hidden
+      .map(n => rowMap.get(n.creative!.creative_id))
+      .filter((r): r is Row => r != null);
+
+    if (expandedNMore.has(nMoreKey)) {
+      result.push({ kind: "n-more-header", key: nMoreKey, groupKey: parentKey, hiddenCount: hidden.length, hiddenNodes: hidden, depth });
+      for (const n of hidden) result.push({ kind: "node", node: n });
+    } else {
+      const videoCount  = hiddenRows.filter(r => r.creative.creative_type === "Video").length;
+      const imageCount  = hiddenRows.filter(r => r.creative.creative_type === "Image").length;
+      const textCount   = hiddenRows.filter(r => r.creative.creative_type === "Text").length;
+      const nMoreMetrics = aggregate(hiddenRows);
+      result.push({ kind: "n-more", key: nMoreKey, groupKey: parentKey, hiddenRows, metrics: nMoreMetrics, videoCount, imageCount, textCount, depth });
+    }
+  }
+
+  return result;
+}
+
 function getYouTubeId(url: string): string | null {
   const m = url.match(/(?:youtu\.be\/|v=|embed\/)([\w-]{11})/);
   return m ? m[1] : null;
+}
+
+function NMoreCollage({ hiddenRows, size }: { hiddenRows: Row[]; size: number }) {
+  const slots  = Math.min(4, hiddenRows.length);
+  const toShow = hiddenRows.slice(0, slots);
+  const extra  = hiddenRows.length - slots;
+  // 2×2 grid — same width as a square image creative, compact
+  const half   = Math.floor((size - 1) / 2); // cell size (1px gap in middle)
+
+  return (
+    <div
+      className="shrink-0 rounded-lg overflow-hidden border border-white/[0.12]"
+      style={{
+        width:               size,
+        height:              size,
+        display:             "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gridTemplateRows:    "1fr 1fr",
+        gap:                 "1px",
+        background:          "rgba(255,255,255,0.04)",
+      }}
+    >
+      {toShow.map((r, idx) => {
+        const isLastSlot = idx === slots - 1 && extra > 0;
+        const ytId = r.creative.creative_type === "Video"
+          ? getYouTubeId(r.creative.creative_url ?? "")
+          : null;
+        const imgSrc = ytId
+          ? `https://i.ytimg.com/vi/${ytId}/mqdefault.jpg`
+          : r.creative.creative_type === "Image"
+          ? r.creative.creative_url
+          : null;
+
+        return (
+          <div key={r.creative.creative_id} className="relative overflow-hidden bg-white/[0.04]">
+            {imgSrc ? (
+              <img src={imgSrc} alt="" className="w-full h-full object-cover" loading="lazy" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center">
+                <FileText className="text-muted-foreground/40" style={{ width: half * 0.45, height: half * 0.45 }} />
+              </div>
+            )}
+            {isLastSlot && (
+              <div className="absolute inset-0 bg-black/75 flex items-center justify-center">
+                <span className="font-bold text-white tabular-nums" style={{ fontSize: Math.max(11, Math.round(half * 0.35)) }}>
+                  +{extra + 1}
+                </span>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {/* Fill remaining cells if < 4 creatives */}
+      {Array.from({ length: 4 - slots }).map((_, i) => (
+        <div key={`empty-${i}`} className="bg-white/[0.02]" />
+      ))}
+    </div>
+  );
 }
 
 function CreativeThumb({ creative, size }: { creative: Creative; size: number }) {
@@ -450,6 +621,12 @@ export function DirectoryTree({
   compareMode    = false,
   compareMetrics,
   compareTotals,
+  thresholdEnabled     = false,
+  thresholdMetric      = "impressions",
+  thresholdValue       = 100,
+  minVisiblePerGroup   = 5,
+  expandedNMore:       expandedNMoreProp,
+  onExpandedNMoreChange,
 }: Props) {
   const [internalSortBy, setInternalSortBy] = useState<string | null>(null);
   const sortBy   = sortByProp ?? internalSortBy;
@@ -457,6 +634,9 @@ export function DirectoryTree({
   const [internalActiveLevel, setInternalActiveLevel] = useState<number>(1);
   const activeLevel = activeLevelProp ?? internalActiveLevel;
   const setActiveLevel = onActiveLevelChange ?? setInternalActiveLevel;
+  const [internalExpandedNMore, setInternalExpandedNMore] = useState<Set<string>>(new Set());
+  const expandedNMore  = expandedNMoreProp  ?? internalExpandedNMore;
+  const setExpandedNMore = onExpandedNMoreChange ?? setInternalExpandedNMore;
 
   const tree       = useMemo(() => buildTree(rows, hierarchy, sortBy, compareMode ? compareMetrics : undefined), [rows, hierarchy, sortBy, compareMode, compareMetrics]);
   const grandTotal = useMemo(() => aggregate(rows), [rows]);
@@ -491,14 +671,22 @@ export function DirectoryTree({
   };
   const thumbSize   = Math.max(40, Math.min(200, creativeRowHeight));
 
-  const flat = useMemo(() => flattenTree(tree, open), [tree, open]);
+  const flatNodes = useMemo(() => flattenTree(tree, open), [tree, open]);
+  const flat = useMemo<FlatItem[]>(() => {
+    const shouldApply = thresholdEnabled && !structureOnly && (thresholdValue ?? 0) > 0;
+    if (!shouldApply) return flatNodes.map(node => ({ kind: "node" as const, node }));
+    return insertNMoreRows(flatNodes, rows, thresholdMetric, thresholdValue, minVisiblePerGroup, expandedNMore);
+  }, [flatNodes, rows, thresholdEnabled, structureOnly, thresholdMetric, thresholdValue, minVisiblePerGroup, expandedNMore]);
 
   // Group rows are taller when compare deltas are showing
   const groupRowH = compareMode ? 58 : 44;
 
   const estimateSize = (index: number) => {
-    const n = flat[index];
-    if (!n) return groupRowH;
+    const item = flat[index];
+    if (!item) return groupRowH;
+    if (item.kind === "n-more")        return thumbSize + 16;
+    if (item.kind === "n-more-header") return groupRowH;
+    const n = item.node;
     return n.dim === "creative" ? thumbSize + 16 : groupRowH;
   };
 
@@ -507,7 +695,11 @@ export function DirectoryTree({
     getScrollElement: () => scrollRef.current,
     estimateSize,
     overscan:        8,
-    getItemKey:      (i) => flat[i]?.key ?? i,
+    getItemKey:      (i) => {
+      const item = flat[i];
+      if (!item) return i;
+      return item.kind === "node" ? item.node.key : item.key;
+    },
   });
 
   useEffect(() => { virtualizer.measure(); }, [thumbSize, compareMode, virtualizer]);
@@ -664,8 +856,97 @@ export function DirectoryTree({
           >
             <div style={{ height: totalSize, position: "relative", width: "100%" }}>
               {items.map(vi => {
-                const node = flat[vi.index];
-                if (!node) return null;
+                const item = flat[vi.index];
+                if (!item) return null;
+
+                // ── N-More expanded collapse header ──────────────────────────
+                if (item.kind === "n-more-header") {
+                  return (
+                    <div
+                      key={vi.key}
+                      data-index={vi.index}
+                      ref={virtualizer.measureElement}
+                      style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}
+                      className="flex items-center gap-2 border-b border-dashed border-gold/20 cursor-pointer hover:bg-white/[0.02] transition-colors"
+                      onClick={() => {
+                        const n = new Set(expandedNMore);
+                        n.delete(item.key);
+                        setExpandedNMore(n);
+                      }}
+                    >
+                      <div className="flex items-center gap-2 py-2 px-3 w-full" style={{ paddingLeft: indentPx(item.depth) }}>
+                        <ChevronDown className="w-3.5 h-3.5 text-gold/50 shrink-0" />
+                        <span className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">
+                          {item.hiddenCount} below-threshold — click to collapse
+                        </span>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // ── N-More collapsed summary row ──────────────────────────────
+                if (item.kind === "n-more") {
+                  return (
+                    <div
+                      key={vi.key}
+                      data-index={vi.index}
+                      ref={virtualizer.measureElement}
+                      style={{
+                        position: "absolute", top: 0, left: 0, width: "100%",
+                        transform: `translateY(${vi.start}px)`,
+                        gridTemplateColumns: colTemplate,
+                      }}
+                      className="grid items-center border-b border-dashed border-white/[0.06] hover:bg-white/[0.02] transition-colors group/nmore"
+                    >
+                      {/* Label cell */}
+                      <div className="py-2.5 pr-3 flex items-center gap-3 min-w-0" style={{ paddingLeft: indentPx(item.depth) }}>
+                        <span className="w-4 h-4 opacity-0 shrink-0" />
+                        <NMoreCollage hiddenRows={item.hiddenRows} size={thumbSize} />
+                        <div className="min-w-0 flex-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const n = new Set(expandedNMore);
+                              n.add(item.key);
+                              setExpandedNMore(n);
+                            }}
+                            className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            <ChevronRight className="w-3.5 h-3.5 text-gold/50 shrink-0" />
+                            {item.hiddenRows.length} more creatives
+                          </button>
+                          <div className="flex gap-1.5 mt-1 flex-wrap">
+                            {item.videoCount > 0 && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-teal-500/10 border border-teal-500/20 text-teal-400">
+                                {item.videoCount} Video{item.videoCount !== 1 ? "s" : ""}
+                              </span>
+                            )}
+                            {item.imageCount > 0 && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gold/10 border border-gold/20 text-gold">
+                                {item.imageCount} Image{item.imageCount !== 1 ? "s" : ""}
+                              </span>
+                            )}
+                            {item.textCount > 0 && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400">
+                                {item.textCount} Text
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      {/* Muted metric cells — sum of hidden */}
+                      {!structureOnly && cols.map(c => (
+                        <div key={c.key} className="py-2 px-3 tabular-nums whitespace-nowrap text-sm text-right text-muted-foreground/50">
+                          {c.render(item.metrics)}
+                        </div>
+                      ))}
+                      {showShare && <div />}
+                    </div>
+                  );
+                }
+
+                // ── Normal AggNode row (existing path, unchanged) ─────────────
+                const node = item.node;
                 const isOpen      = open.has(node.key);
                 const hasChildren = !!node.children?.length;
                 const isCreative  = node.dim === "creative";
@@ -817,7 +1098,7 @@ export function DirectoryTree({
 
             {/* Virtualization footer hint */}
             <div className="px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground/70 border-t border-white/5 flex items-center justify-between sticky bottom-0 bg-background/60 backdrop-blur">
-              <span>{flat.length.toLocaleString()} rows rendered virtually</span>
+              <span>{flat.length.toLocaleString()} rows rendered virtually{thresholdEnabled ? " (threshold active)" : ""}</span>
               <span>{items.length} on screen</span>
             </div>
           </div>
