@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the **CreativeVisibility** project will be documented in this file.
+All notable changes to the **CreativeVisibility** project will be documented in this file
 
 ## [Unreleased] - 2026-06-04 (Session 6)
 
