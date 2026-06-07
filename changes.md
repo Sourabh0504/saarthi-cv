@@ -2,6 +2,24 @@
 
 All notable changes to the **CreativeVisibility** project will be documented in this file
 
+## [Unreleased] - 2026-06-08 (Session 8)
+
+### Changed
+- [frontend/src/components/FilterPanel.tsx](file:///d:/CreativeVisibility/frontend/src/components/FilterPanel.tsx): Compact filter bar redesign. Consolidated 5 separate dimension dropdowns (Status, Cities, Funnels, Types, Campaigns) into a single `FiltersPopover` triggered by a `Filter` icon button with label "Filters". Active-count gold-gradient badge appears on trigger when any dimension filter is applied. Inside the popover: 5 `FilterRow` components — label (72px fixed) + inline multi-select dropdown with gold check styling, All/reset option, and search input for Cities/Types/Campaigns rows.
+- [frontend/src/components/FilterPanel.tsx](file:///d:/CreativeVisibility/frontend/src/components/FilterPanel.tsx): Renamed `utilityBtn` → `iconBtn`, reduced all icon button height from `h-9` to `h-8`, search bar from `h-9` to `h-8`, PDF CTA from `h-9` to `h-8`.
+- [frontend/src/components/FilterPanel.tsx](file:///d:/CreativeVisibility/frontend/src/components/FilterPanel.tsx): Reset button is now conditionally rendered (hidden when `activeCount === 0`) instead of disabled. `dimCount` (dimension-only) drives Filters badge; `activeCount` (includes search) drives Reset visibility.
+- [frontend/src/components/FilterPanel.tsx](file:///d:/CreativeVisibility/frontend/src/components/FilterPanel.tsx): Removed `SegmentDropdown` component (replaced by `FiltersPopover` + `FilterRow`). Added `Filter` to lucide imports. `Filters` interface and all Props/handlers unchanged.
+
+## [Unreleased] - 2026-06-08 (Session 7)
+
+### Changed
+- [frontend/src/routes/index.tsx](file:///d:/CreativeVisibility/frontend/src/routes/index.tsx): Collapsed palette switcher from 4 inline swatch buttons into a single `Palette` icon button + Popover. Popover shows 4 labelled swatches; active one gets a ring + scale indicator.
+- [frontend/src/routes/index.tsx](file:///d:/CreativeVisibility/frontend/src/routes/index.tsx): Collapsed inline threshold controls into a single `SlidersHorizontal` icon button + Popover. Popover contains the enabled toggle, metric selector, min-value input, and min-per-group input. Icon tints gold when filter is active. All state and handlers unchanged.
+- [frontend/src/routes/index.tsx](file:///d:/CreativeVisibility/frontend/src/routes/index.tsx): Added `Palette`, `SlidersHorizontal` to lucide-react imports; added `Popover`, `PopoverTrigger`, `PopoverContent` from `@/components/ui/popover`.
+- [frontend/src/styles.css](file:///d:/CreativeVisibility/frontend/src/styles.css): Redesigned base as "Sophisticated Obsidian" — background shifted to `oklch(0.13 0.003 260)`, gold tokens softened (chroma 0.15→0.12), `Inter` added as primary `--font-body`.
+- [frontend/src/styles.css](file:///d:/CreativeVisibility/frontend/src/styles.css): Added three palette override classes: `.palette-indigo`, `.palette-mint`, `.palette-rose` — each overrides background, card, popover, primary, ring, gold, gold-dim, gradient, and scrollbar tokens.
+- [frontend/src/routes/__root.tsx](file:///d:/CreativeVisibility/frontend/src/routes/__root.tsx): Added Inter font preconnect + stylesheet `<link>` tags to root route `head()`.
+
 ## [Unreleased] - 2026-06-04 (Session 6)
 
 ### Added

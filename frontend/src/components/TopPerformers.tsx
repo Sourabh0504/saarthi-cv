@@ -1,15 +1,29 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { Trophy, Medal, Award, FileText, ChevronDown, Info, Pencil, Check, Play, FileDown, Loader2, ExternalLink } from "lucide-react";
-import { copyText } from "@/lib/utils";
+import { Trophy, Medal, Award, FileText, ChevronDown, Info, Pencil, Check, Play, ExternalLink, Plus, X, Fingerprint, MapPin, Filter, Tag } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { cn, copyText } from "@/lib/utils";
 import type { Creative } from "@/lib/api";
-import { type ComputedMetrics, fmtINR, fmtINR0, fmtNum, fmtPct, getYouTubeId } from "@/lib/metrics";
+import { computeMetrics, type ComputedMetrics, fmtINR, fmtINR0, fmtNum, fmtPct, getYouTubeId } from "@/lib/metrics";
 import { exportTopPerformersPdf } from "@/lib/exportTopPerformersPdf";
 
 interface Row { creative: Creative; metrics: ComputedMetrics; }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 export type ThresholdType = "impressions" | "spend";
+
+// ─── Comparison types ────────────────────────────────────────────────────────
+interface ComparisonCol {
+  city: string | null;
+  type: "Image" | "Video";
+}
+
+interface ComparisonRowState {
+  id: string;
+  label: "compare" | "city-level";
+  left: ComparisonCol;
+  right: ComparisonCol;
+}
 
 // ─── Props ───────────────────────────────────────────────────────────────────
 interface Props {
@@ -18,6 +32,7 @@ interface Props {
   rowHeight: number;
   dateRange: string;
   onCreativeClick: (c: Creative) => void;
+  exportRef?: React.MutableRefObject<(() => Promise<void>) | null>;
 }
 
 const metricLabel: Record<Props["metric"], string> = {
@@ -175,16 +190,28 @@ export function ThresholdPill({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [typeOpen, setTypeOpen] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const typeRef = useRef<HTMLDivElement>(null);
+  const inputRef    = useRef<HTMLInputElement>(null);
+  const typeBtnRef  = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
 
-  // Close type dropdown when clicking outside
+  // Compute portal position when dropdown opens
+  useEffect(() => {
+    if (typeOpen && typeBtnRef.current) {
+      const r = typeBtnRef.current.getBoundingClientRect();
+      setDropdownPos({ top: r.bottom + 4, left: r.left });
+    }
+  }, [typeOpen]);
+
+  // Close when clicking outside both the trigger and the portaled dropdown
   useEffect(() => {
     if (!typeOpen) return;
     const handler = (e: MouseEvent) => {
-      if (typeRef.current && !typeRef.current.contains(e.target as Node)) {
-        setTypeOpen(false);
-      }
+      if (
+        typeBtnRef.current?.contains(e.target as Node) ||
+        dropdownRef.current?.contains(e.target as Node)
+      ) return;
+      setTypeOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -214,46 +241,50 @@ export function ThresholdPill({
 
   return (
     <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-white/[0.08]
-                    bg-white/[0.03] text-xs text-muted-foreground">
+                    bg-white/[0.03] text-xs text-muted-foreground shrink-0">
       <Info className="w-3 h-3 text-blue-400 shrink-0" />
       <span className="whitespace-nowrap">Min </span>
 
-      {/* Type dropdown */}
-      <div ref={typeRef} className="relative">
-        <button
-          type="button"
-          onClick={() => setTypeOpen(o => !o)}
-          className="flex items-center gap-0.5 font-semibold text-foreground hover:text-blue-300
-                     transition-colors rounded px-0.5"
-          title="Switch threshold type"
-        >
-          {typeLabel}
-          <ChevronDown className={`w-2.5 h-2.5 transition-transform duration-150 ${typeOpen ? "rotate-180" : ""}`} />
-        </button>
+      {/* Type dropdown trigger */}
+      <button
+        ref={typeBtnRef}
+        type="button"
+        onClick={() => setTypeOpen(o => !o)}
+        className="flex items-center gap-0.5 font-semibold text-foreground hover:text-blue-300
+                   transition-colors rounded px-0.5 cursor-pointer"
+        title="Switch threshold type"
+      >
+        {typeLabel}
+        <ChevronDown className={`w-2.5 h-2.5 transition-transform duration-150 ${typeOpen ? "rotate-180" : ""}`} />
+      </button>
 
-        {typeOpen && (
-          <div className="absolute left-0 top-full mt-1 z-50 glass rounded-lg border border-white/10
-                          shadow-[0_8px_24px_-8px_rgba(0,0,0,0.7)] p-1 min-w-[120px]">
-            {([
-              { value: "impressions" as ThresholdType, label: "Impressions" },
-              { value: "spend"       as ThresholdType, label: "Spend (₹)"   },
-            ]).map(opt => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => handleTypeChange(opt.value)}
-                className={`w-full text-left px-3 py-1.5 rounded-md text-xs font-medium transition-colors
-                           ${thresholdType === opt.value
-                  ? "bg-blue-500/20 text-blue-300"
-                  : "text-foreground hover:bg-white/[0.07]"
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      {/* Portaled dropdown — escapes all stacking contexts */}
+      {typeOpen && dropdownPos && createPortal(
+        <div
+          ref={dropdownRef}
+          style={{ position: "fixed", top: dropdownPos.top, left: dropdownPos.left, zIndex: 9999 }}
+          className="glass rounded-lg border border-white/10 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.8)] p-1 min-w-[120px]"
+        >
+          {([
+            { value: "impressions" as ThresholdType, label: "Impressions" },
+            { value: "spend"       as ThresholdType, label: "Spend (₹)"   },
+          ]).map(opt => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => handleTypeChange(opt.value)}
+              className={`w-full text-left px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer
+                         ${thresholdType === opt.value
+                ? "bg-blue-500/20 text-blue-300"
+                : "text-foreground hover:bg-white/[0.07]"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>,
+        document.body,
+      )}
 
       <span className="whitespace-nowrap">:{" "}
         {editing ? (
@@ -465,8 +496,7 @@ function HoverPreview({
 }
 
 // ─── TopPerformers (root) ──────────────────────────────────────────────────
-export function TopPerformers({ rows, metric, rowHeight, dateRange, onCreativeClick }: Props) {
-  const [pdfLoading, setPdfLoading] = useState(false);
+export function TopPerformers({ rows, metric, rowHeight, dateRange, onCreativeClick, exportRef }: Props) {
 
   const imageRows = useMemo(
     () => rows.filter(r => r.creative.creative_type === "Image"),
@@ -481,46 +511,51 @@ export function TopPerformers({ rows, metric, rowHeight, dateRange, onCreativeCl
   const imageRankedRef = useRef<Array<{ rank: number; creative: Creative; metrics: ComputedMetrics }>>([]);
   const videoRankedRef = useRef<Array<{ rank: number; creative: Creative; metrics: ComputedMetrics }>>([]);
 
+  // ── Comparison rows ───────────────────────────────────────────────────────
+  const [comparisonRows, setComparisonRows] = useState<ComparisonRowState[]>([]);
+
+  const availableCities = useMemo(
+    () => [...new Set(rows.map(r => r.creative.city).filter(Boolean))].sort() as string[],
+    [rows],
+  );
+
+  const addComparisonRow = () => setComparisonRows(prev => [...prev, {
+    id: crypto.randomUUID(),
+    label: "compare" as const,
+    left:  { city: availableCities[0] ?? null, type: "Image" },
+    right: { city: availableCities[0] ?? null, type: "Video" },
+  }]);
+
+  const removeComparisonRow = (id: string) =>
+    setComparisonRows(prev => prev.filter(r => r.id !== id));
+
+  const updateComparisonLabel = (id: string, label: ComparisonRowState["label"]) =>
+    setComparisonRows(prev => prev.map(r => r.id === id ? { ...r, label } : r));
+
+  const updateComparisonCol = (id: string, side: "left" | "right", patch: Partial<ComparisonCol>) =>
+    setComparisonRows(prev => prev.map(r =>
+      r.id === id ? { ...r, [side]: { ...r[side], ...patch } } : r
+    ));
+
   const RANK_LABEL: Record<Props["metric"], string> = {
     ctr: "CTR", conversions: "Conversions", cpc: "CPC", cpa: "CPA",
   };
 
   const handleExportPdf = async () => {
-    setPdfLoading(true);
-    try {
-      await exportTopPerformersPdf({
-        imageRows: imageRankedRef.current,
-        videoRows: videoRankedRef.current,
-        rankMetric: metric,
-        rankLabel:  RANK_LABEL[metric],
-        dateRange,
-        rowHeightPx: rowHeight,
-      });
-    } finally {
-      setPdfLoading(false);
-    }
+    await exportTopPerformersPdf({
+      imageRows: imageRankedRef.current,
+      videoRows: videoRankedRef.current,
+      rankMetric: metric,
+      rankLabel:  RANK_LABEL[metric],
+      dateRange,
+      rowHeightPx: rowHeight,
+    });
   };
+
+  if (exportRef) exportRef.current = handleExportPdf;
 
   return (
     <div className="space-y-4">
-      {/* Download PDF button — top-right */}
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={handleExportPdf}
-          disabled={pdfLoading}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold
-                     bg-gold/10 border border-gold/30 text-gold
-                     hover:bg-gold/20 hover:border-gold/60 active:scale-95
-                     transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Download Top Performers as PDF"
-        >
-          {pdfLoading
-            ? <Loader2 className="w-4 h-4 animate-spin" />
-            : <FileDown className="w-4 h-4" />}
-          {pdfLoading ? "Generating PDF…" : "Download PDF"}
-        </button>
-      </div>
 
       <div className="grid lg:grid-cols-2 gap-6">
         <RankColumn
@@ -531,6 +566,8 @@ export function TopPerformers({ rows, metric, rowHeight, dateRange, onCreativeCl
           previewSide="right"
           onCreativeClick={onCreativeClick}
           onRankedRowsChange={(r) => { imageRankedRef.current = r; }}
+          defaultMinThreshold={200}
+          defaultThresholdType="spend"
         />
         <RankColumn
           title="Top Video Creatives"
@@ -539,9 +576,95 @@ export function TopPerformers({ rows, metric, rowHeight, dateRange, onCreativeCl
           rowHeight={rowHeight}
           previewSide="left"
           onCreativeClick={onCreativeClick}
+          defaultMinThreshold={1000}
+          defaultThresholdType="spend"
           onRankedRowsChange={(r) => { videoRankedRef.current = r; }}
         />
       </div>
+
+      {/* ── Comparison rows ─────────────────────────────────────────────── */}
+      {comparisonRows.map((row) => (
+        <div key={row.id} className="space-y-3">
+          {/* Divider with label toggle + remove button */}
+          <div className="flex items-center gap-3">
+            <div className="h-px flex-1 bg-white/[0.06]" />
+            <div className="flex items-center rounded-lg border border-white/[0.08] p-0.5 shrink-0 gap-0.5">
+              {([
+                { value: "compare",    text: "Compare"    },
+                { value: "city-level", text: "City Level" },
+              ] as const).map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => updateComparisonLabel(row.id, opt.value)}
+                  className={cn(
+                    "px-2.5 py-0.5 rounded-md text-[11px] font-semibold transition-all cursor-pointer",
+                    row.label === opt.value
+                      ? "bg-gold/[0.15] text-gold"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {opt.text}
+                </button>
+              ))}
+            </div>
+            <div className="h-px flex-1 bg-white/[0.06]" />
+            <button
+              type="button"
+              onClick={() => removeComparisonRow(row.id)}
+              className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-red-400 transition-colors shrink-0 cursor-pointer"
+            >
+              <X className="w-3 h-3" />
+              Remove
+            </button>
+          </div>
+
+          <div className="grid lg:grid-cols-2 gap-6">
+            <ComparisonColumnPanel
+              col={row.left}
+              rows={rows}
+              metric={metric}
+              rowHeight={rowHeight}
+              previewSide="right"
+              onCreativeClick={onCreativeClick}
+              availableCities={availableCities}
+              onUpdate={patch => updateComparisonCol(row.id, "left", patch)}
+            />
+            <ComparisonColumnPanel
+              col={row.right}
+              rows={rows}
+              metric={metric}
+              rowHeight={rowHeight}
+              previewSide="left"
+              onCreativeClick={onCreativeClick}
+              availableCities={availableCities}
+              onUpdate={patch => updateComparisonCol(row.id, "right", patch)}
+            />
+          </div>
+        </div>
+      ))}
+
+      {/* ── Add comparison row button ─────────────────────────────────────── */}
+      <button
+        type="button"
+        onClick={addComparisonRow}
+        className="relative w-full py-4 rounded-2xl border border-dashed border-gold/20
+                   hover:border-gold/45 transition-all duration-300 group overflow-hidden cursor-pointer"
+      >
+        {/* Shimmer sweep on hover */}
+        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-gold/[0.06] to-transparent
+                        -translate-x-full group-hover:translate-x-full transition-transform duration-700 pointer-events-none" />
+        <div className="relative flex items-center justify-center gap-3 text-sm font-semibold text-gold/50 group-hover:text-gold/90 transition-colors duration-200">
+          <div className="w-6 h-6 rounded-full border border-current flex items-center justify-center shrink-0
+                          group-hover:bg-gold/10 group-hover:shadow-[0_0_12px_rgba(212,175,55,0.25)] transition-all duration-300">
+            <Plus className="w-3.5 h-3.5" />
+          </div>
+          <span>Add City Comparison</span>
+          <span className="text-[11px] font-normal text-muted-foreground/60 group-hover:text-gold/40 transition-colors duration-200">
+            · compare any city &amp; format side by side
+          </span>
+        </div>
+      </button>
     </div>
   );
 }
@@ -556,6 +679,8 @@ function RankColumn({
   previewSide,
   onCreativeClick,
   onRankedRowsChange,
+  defaultMinThreshold = 100,
+  defaultThresholdType = "impressions",
 }: {
   title: string;
   allRows: Row[];
@@ -564,23 +689,62 @@ function RankColumn({
   previewSide: "left" | "right";
   onCreativeClick: (c: Creative) => void;
   onRankedRowsChange?: (rows: Array<{ rank: number; creative: Creative; metrics: ComputedMetrics }>) => void;
+  defaultMinThreshold?: number;
+  defaultThresholdType?: ThresholdType;
 }) {
   const [topN, setTopN] = useState<number>(5);
   const [hoveredRow, setHoveredRow] = useState<Row | null>(null);
   const columnRef = useRef<HTMLDivElement>(null);
 
   // ─ Per-column independent threshold state ──────────────────────────────────────
-  const [minThreshold, setMinThreshold] = useState<number>(100);
-  const [thresholdType, setThresholdType] = useState<ThresholdType>("impressions");
+  const [minThreshold, setMinThreshold] = useState<number>(defaultMinThreshold);
+  const [thresholdType, setThresholdType] = useState<ThresholdType>(defaultThresholdType);
+  const [uniqueMode, setUniqueMode] = useState(true);
 
   const handleThresholdTypeChange = (t: ThresholdType) => {
     setThresholdType(t);
-    setMinThreshold(t === "spend" ? 500 : 100);
+    setMinThreshold(t === "spend" ? defaultMinThreshold : 100);
   };
 
+  // Deduplicate by creative URL — aggregate raw metrics, then recompute KPIs
+  const deduplicatedRows = useMemo(() => {
+    if (!uniqueMode) return allRows;
+
+    const grouped = new Map<string, Row[]>();
+    for (const row of allRows) {
+      const url = row.creative.creative_url;
+      if (!grouped.has(url)) grouped.set(url, []);
+      grouped.get(url)!.push(row);
+    }
+
+    return [...grouped.values()].map(group => {
+      if (group.length === 1) return group[0];
+
+      // Sort group by spend so the best-performing city comes first
+      const bySpend = [...group].sort((a, b) => b.metrics.cost - a.metrics.cost);
+      const rep = bySpend[0];
+
+      // Unique cities in spend-rank order (best city first)
+      const cities = [...new Set(bySpend.map(r => r.creative.city).filter(Boolean))];
+
+      const agg = computeMetrics({
+        impressions: group.reduce((s, r) => s + r.metrics.impressions, 0),
+        clicks:      group.reduce((s, r) => s + r.metrics.clicks, 0),
+        cost:        group.reduce((s, r) => s + r.metrics.cost, 0),
+        conversions: group.reduce((s, r) => s + r.metrics.conversions, 0),
+      });
+
+      const creative = cities.length > 1
+        ? { ...rep.creative, city: cities.join(" · ") }
+        : rep.creative;
+
+      return { creative, metrics: agg };
+    });
+  }, [allRows, uniqueMode]);
+
   const rows = useMemo(
-    () => rank(allRows, metric, topN, minThreshold, thresholdType),
-    [allRows, metric, topN, minThreshold, thresholdType],
+    () => rank(deduplicatedRows, metric, topN, minThreshold, thresholdType),
+    [deduplicatedRows, metric, topN, minThreshold, thresholdType],
   );
 
   // Notify parent with ranked rows (for PDF export)
@@ -599,10 +763,10 @@ function RankColumn({
   return (
     <div ref={columnRef} className="glass rounded-2xl p-5">
       {/* Column header: [N▾] [Title]  [by CTR]  [Min Impr▾] */}
-      <h3 className="font-display font-semibold text-lg mb-4 flex items-center gap-2 flex-wrap">
+      <h3 className="font-display font-semibold text-lg mb-4 flex items-center gap-2 min-w-0">
         <span className="w-1 h-5 bg-gold-gradient rounded-full shrink-0" />
         <TopNDropdown value={topN} onChange={setTopN} />
-        <span className="truncate">{title}</span>
+        <span className="truncate min-w-0 flex-1">{title}</span>
         <span className="text-xs text-muted-foreground shrink-0">by {metricLabel[metric]}</span>
         {/* Per-column threshold pill — lives in the header */}
         <ThresholdPill
@@ -611,6 +775,21 @@ function RankColumn({
           onChange={setMinThreshold}
           onTypeChange={handleThresholdTypeChange}
         />
+        {/* Unique toggle — merges duplicates by URL */}
+        <button
+          type="button"
+          onClick={() => setUniqueMode(m => !m)}
+          title="Aggregate creatives with the same URL across campaigns, cities & ad groups"
+          className={cn(
+            "flex items-center gap-1 h-6 px-2 rounded-md border text-[10px] font-semibold transition-all cursor-pointer shrink-0",
+            uniqueMode
+              ? "border-gold/40 bg-gold/[0.12] text-gold"
+              : "border-white/10 bg-white/[0.03] text-muted-foreground hover:text-foreground hover:border-white/20",
+          )}
+        >
+          <Fingerprint className="w-3 h-3 shrink-0" />
+          Unique
+        </button>
       </h3>
 
       {rows.length === 0 && (
@@ -687,16 +866,32 @@ function RankColumn({
                 <div className="font-display font-bold text-[14px] leading-tight truncate group-hover:text-gold transition-colors">
                   {r.creative.headline}
                 </div>
-                <div className="text-[12px] font-semibold truncate flex items-center gap-1.5">
-                  {r.creative.city && <span className="text-white/90">{r.creative.city}</span>}
-                  {r.creative.city && (r.creative.category || r.creative.funnel) && <span className="text-white/40">·</span>}
-                  {r.creative.category && <span className="text-white/80">{r.creative.category}</span>}
-                  {r.creative.category && r.creative.funnel && <span className="text-white/40">·</span>}
-                  {r.creative.funnel && <span className="text-white/90">{r.creative.funnel}</span>}
+                {/* Row 1: Location */}
+                <div className="flex items-center gap-1 text-[11px]">
+                  <MapPin className="w-3 h-3 shrink-0 text-white/35" />
+                  <span className="font-semibold text-white/85 truncate">
+                    {r.creative.city || "—"}
+                  </span>
                 </div>
-                {r.creative.campaign_type && (
-                  <div className="text-[12px] font-bold text-white/70 truncate">
-                    {r.creative.campaign_type}
+
+                {/* Row 2: Funnel · Campaign Type */}
+                {(r.creative.funnel || r.creative.campaign_type) && (
+                  <div className="flex items-center gap-2 text-[11px]">
+                    {r.creative.funnel && (
+                      <span className="flex items-center gap-1 min-w-0">
+                        <Filter className="w-3 h-3 shrink-0 text-white/35" />
+                        <span className="font-medium text-white/75 truncate">{r.creative.funnel}</span>
+                      </span>
+                    )}
+                    {r.creative.funnel && r.creative.campaign_type && (
+                      <span className="text-white/20 shrink-0">·</span>
+                    )}
+                    {r.creative.campaign_type && (
+                      <span className="flex items-center gap-1 min-w-0">
+                        <Tag className="w-3 h-3 shrink-0 text-white/35" />
+                        <span className="font-medium text-white/75 truncate">{r.creative.campaign_type}</span>
+                      </span>
+                    )}
                   </div>
                 )}
                 {r.creative.creative_url && (
@@ -780,6 +975,82 @@ function RankColumn({
       {hoveredRow && (
         <HoverPreview row={hoveredRow} side={previewSide} anchorRef={columnRef} />
       )}
+    </div>
+  );
+}
+
+// ─── ComparisonColumnPanel ─────────────────────────────────────────────────
+function ComparisonColumnPanel({
+  col, rows, metric, rowHeight, previewSide, onCreativeClick, availableCities, onUpdate,
+}: {
+  col: ComparisonCol;
+  rows: Row[];
+  metric: Props["metric"];
+  rowHeight: number;
+  previewSide: "left" | "right";
+  onCreativeClick: (c: Creative) => void;
+  availableCities: string[];
+  onUpdate: (patch: Partial<ComparisonCol>) => void;
+}) {
+  const filtered = useMemo(
+    () => rows.filter(r =>
+      r.creative.creative_type === col.type &&
+      (col.city === null || r.creative.city === col.city)
+    ),
+    [rows, col.city, col.type],
+  );
+
+  const title = `${col.city ?? "All Cities"} · ${col.type === "Image" ? "Static" : "Video"}`;
+
+  return (
+    <div className="space-y-3">
+      {/* Config row: city selector + Image/Video toggle */}
+      <div className="flex items-center gap-2">
+        <Select
+          value={col.city ?? "__all__"}
+          onValueChange={v => onUpdate({ city: v === "__all__" ? null : v })}
+        >
+          <SelectTrigger className="h-8 text-xs flex-1 min-w-0">
+            <SelectValue placeholder="All Cities" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All Cities</SelectItem>
+            {availableCities.map(c => (
+              <SelectItem key={c} value={c}>{c}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <div className="flex rounded-lg border border-white/10 overflow-hidden shrink-0">
+          {(["Image", "Video"] as const).map(t => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => onUpdate({ type: t })}
+              className={cn(
+                "px-3 h-8 text-xs font-medium transition-all cursor-pointer",
+                col.type === t
+                  ? "bg-gold-gradient text-[#2a1800]"
+                  : "text-muted-foreground hover:text-foreground hover:bg-white/[0.05]",
+              )}
+            >
+              {t === "Image" ? "Static" : "Video"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <RankColumn
+        key={col.type}
+        title={title}
+        allRows={filtered}
+        metric={metric}
+        rowHeight={rowHeight}
+        previewSide={previewSide}
+        onCreativeClick={onCreativeClick}
+        defaultMinThreshold={col.type === "Image" ? 200 : 1000}
+        defaultThresholdType="spend"
+      />
     </div>
   );
 }

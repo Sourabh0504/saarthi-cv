@@ -77,7 +77,12 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { title: "CreativeVisibility" },
       { name: "description", content: "Aukera Jewellery Campaign Performance Portal" },
     ],
-    links: [{ rel: "stylesheet", href: appCss }],
+    links: [
+      { rel: "stylesheet", href: appCss },
+      { rel: "preconnect", href: "https://fonts.googleapis.com" },
+      { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "" },
+      { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" },
+    ],
   }),
   shellComponent: RootShell,
   component: RootComponent,

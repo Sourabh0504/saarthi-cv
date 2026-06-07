@@ -5,8 +5,11 @@ import {
   Gem, Sparkles, Moon, Sun, LayoutGrid, Trophy,
   IndianRupee, MousePointerClick, Eye, Coins, PanelLeftClose,
   PanelLeftOpen, RefreshCw, AlertTriangle,
-  Loader2, FileDown, Percent,
+  Loader2, FileDown, Percent, Palette, SlidersHorizontal, ChevronDown,
 } from "lucide-react";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 // ── API ───────────────────────────────────────────────────────────────────────
 import {
@@ -223,6 +226,7 @@ function Portal() {
   const [sidebarOpen, setSidebarOpen]   = useState(true);
   const [columns, setColumns]           = useState<Record<string, boolean>>(DEFAULT_COLS);
   const [theme, setTheme]               = useState<"dark" | "light">("dark");
+  const [palette, setPalette]           = useState<"gold" | "indigo" | "mint" | "rose">("gold");
   const [exportOpen, setExportOpen]     = useState(false);
   const [rankMetric, setRankMetric]     = useState<"ctr" | "conversions" | "cpc" | "cpa">("ctr");
   const [mode, setMode]                 = useState<SidebarMode>("report");
@@ -232,10 +236,17 @@ function Portal() {
   const [directoryLevel, setDirectoryLevel] = useState<number>(1);
   const [pdfLoading, setPdfLoading]     = useState(false);
   const [activeTab, setActiveTab]       = useState<"directory" | "top">("directory");
+  const topPdfRef = useRef<(() => Promise<void>) | null>(null);
+  const [topPdfLoading, setTopPdfLoading] = useState(false);
+  const handleTopPdf = useCallback(async () => {
+    if (!topPdfRef.current) return;
+    setTopPdfLoading(true);
+    try { await topPdfRef.current(); } finally { setTopPdfLoading(false); }
+  }, []);
 
   // ── Threshold filter ──────────────────────────────────────────────────────
-  const [thresholdEnabled,    setThresholdEnabled]    = useState(false);
-  const [thresholdMetric,     setThresholdMetric]     = useState<"impressions" | "cost">("impressions");
+  const [thresholdEnabled,    setThresholdEnabled]    = useState(true);
+  const [thresholdMetric,     setThresholdMetric]     = useState<"impressions" | "cost">("cost");
   const [thresholdValue,      setThresholdValue]      = useState(100);
   const [minVisiblePerGroup,  setMinVisiblePerGroup]  = useState(5);
   const [expandedNMore,       setExpandedNMore]       = useState<Set<string>>(new Set());
@@ -318,6 +329,17 @@ function Portal() {
     document.documentElement.classList.toggle("light", theme === "light");
     localStorage.setItem("cv-theme", theme);
   }, [theme]);
+
+  // ── Palette persistence ───────────────────────────────────────────────────
+  useEffect(() => {
+    const stored = localStorage.getItem("cv-palette") as "gold" | "indigo" | "mint" | "rose" | null;
+    if (stored) setPalette(stored);
+  }, []);
+  useEffect(() => {
+    document.documentElement.classList.remove("palette-indigo", "palette-mint", "palette-rose");
+    if (palette !== "gold") document.documentElement.classList.add(`palette-${palette}`);
+    localStorage.setItem("cv-palette", palette);
+  }, [palette]);
 
   // ── Shared view from URL hash ─────────────────────────────────────────────
   useEffect(() => {
@@ -704,21 +726,8 @@ function Portal() {
   // ── Cities from API (dynamic — never hardcoded) ───────────────────────────
   const cities = filterOptions.cities;
 
-  // ── Daily rows shim for CreativeDetailModal ───────────────────────────────
-  // The modal expects DailyRow[] for its charts. We synthesise a single-row
-  // "aggregate" entry per creative from the already-aggregated API data so
-  // the modal renders correctly. When real daily granularity is needed in
-  // a future phase, swap this with a /api/daily-detail endpoint.
-  const dailyPerformanceShim = useMemo(() => {
-    return creatives.map(c => ({
-      date:        filters.endDate,   // single aggregate row dated at end of range
-      creative_id: c.creative_id,
-      impressions: c.impressions  ?? 0,
-      clicks:      c.clicks       ?? 0,
-      cost:        c.cost         ?? 0,
-      conversions: c.conversions  ?? 0,
-    }));
-  }, [creatives, filters.endDate]);
+  // rawDailyRows is passed directly to CreativeDetailModal.
+  // No shim needed — all daily rows are already in memory from /api/raw-performance.
 
   // ─────────────────────────────────────────────────────────────────────────
   // Render
@@ -781,6 +790,57 @@ function Portal() {
             >
               <RefreshCw className={cn("w-4 h-4", syncing && "animate-spin")} />
             </Button>
+
+            {/* Palette switcher */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost" size="icon"
+                  className="h-8 w-8 border-transparent hover:bg-white/10"
+                  aria-label="Switch colour palette"
+                  title="Switch colour palette"
+                >
+                  <Palette className="w-4 h-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-auto p-3">
+                <p className="text-[10px] text-muted-foreground mb-2.5 uppercase tracking-wider font-medium">Palette</p>
+                <div className="flex items-center gap-3">
+                  {(["gold", "indigo", "mint", "rose"] as const).map((p) => {
+                    const swatchColor: Record<string, string> = {
+                      gold:   "oklch(0.77 0.12 85)",
+                      indigo: "oklch(0.70 0.18 270)",
+                      mint:   "oklch(0.72 0.14 175)",
+                      rose:   "oklch(0.70 0.16 10)",
+                    };
+                    return (
+                      <button
+                        key={p}
+                        onClick={() => setPalette(p)}
+                        className="flex flex-col items-center gap-1.5 group"
+                        title={`${p.charAt(0).toUpperCase() + p.slice(1)} palette`}
+                      >
+                        <span
+                          className={cn(
+                            "w-6 h-6 rounded-full transition-transform group-hover:scale-110",
+                            palette === p
+                              ? "ring-2 ring-white/60 ring-offset-1 ring-offset-popover scale-110"
+                              : "opacity-60 group-hover:opacity-100"
+                          )}
+                          style={{ background: swatchColor[p] }}
+                        />
+                        <span className={cn(
+                          "text-[10px] capitalize",
+                          palette === p ? "text-foreground" : "text-muted-foreground"
+                        )}>
+                          {p}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </PopoverContent>
+            </Popover>
 
             <Button
               variant="outline" size="icon"
@@ -987,59 +1047,115 @@ function Portal() {
                   </>
                 )}
 
-                {/* Threshold filter controls — only visible when Creative Directory tab is active */}
-                {activeTab === "directory" && (
-                  <div className="flex items-center gap-2 ml-auto flex-wrap">
-                    {/* Enable/disable toggle */}
+                {/* ── Download PDF — right end of tab row for Top Performers ── */}
+                {activeTab === "top" && (
+                  <div className="ml-auto">
                     <button
                       type="button"
-                      onClick={() => setThresholdEnabled(e => !e)}
-                      title={thresholdEnabled ? "Disable threshold filter" : "Enable threshold filter — hides low-data creatives"}
-                      className={cn(
-                        "flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg border transition-all font-medium",
-                        thresholdEnabled
-                          ? "border-gold/40 bg-gold/10 text-gold"
-                          : "border-border text-muted-foreground hover:text-foreground hover:border-white/20",
-                      )}
+                      onClick={handleTopPdf}
+                      disabled={topPdfLoading}
+                      className="flex items-center gap-2 h-9 px-4 rounded-xl text-sm font-semibold
+                                 bg-gold/10 border border-gold/30 text-gold
+                                 hover:bg-gold/20 hover:border-gold/60 active:scale-95
+                                 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                      title="Download Top Performers as PDF"
                     >
-                      <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 4h18M7 12h10M11 20h2" />
-                      </svg>
-                      {thresholdEnabled ? "Filter On" : "Filter Off"}
+                      {topPdfLoading
+                        ? <Loader2 className="w-4 h-4 animate-spin" />
+                        : <FileDown className="w-4 h-4" />}
+                      {topPdfLoading ? "Generating PDF…" : "Download PDF"}
                     </button>
+                  </div>
+                )}
 
-                    {/* Controls — dimmed when disabled */}
-                    <div className={cn(
-                      "flex items-center gap-1.5 transition-opacity",
-                      !thresholdEnabled && "opacity-40 pointer-events-none select-none",
-                    )}>
-                      <span className="text-[11px] text-muted-foreground whitespace-nowrap">Min.</span>
-                      <select
-                        value={thresholdMetric}
-                        onChange={e => setThresholdMetric(e.target.value as "impressions" | "cost")}
-                        className="text-[11px] bg-background border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
-                      >
-                        <option value="impressions">Impr.</option>
-                        <option value="cost">Spend</option>
-                      </select>
-                      <span className="text-[11px] text-muted-foreground">&lt;</span>
-                      <input
-                        type="number"
-                        min={0}
-                        value={thresholdValue}
-                        onChange={e => setThresholdValue(Math.max(0, parseInt(e.target.value) || 0))}
-                        className="text-[11px] bg-background border border-border rounded px-2 py-1 w-16 text-right tabular-nums text-foreground"
-                      />
-                      <span className="text-[11px] text-muted-foreground/40 mx-0.5">|</span>
-                      <span className="text-[11px] text-muted-foreground whitespace-nowrap">Min/group</span>
-                      <input
-                        type="number"
-                        min={1}
-                        value={minVisiblePerGroup}
-                        onChange={e => setMinVisiblePerGroup(Math.max(1, parseInt(e.target.value) || 1))}
-                        className="text-[11px] bg-background border border-border rounded px-2 py-1 w-10 text-right tabular-nums text-foreground"
-                      />
-                    </div>
+                {/* ── Threshold — right end of the tab row ── */}
+                {activeTab === "directory" && (
+                  <div className="ml-auto">
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          className={cn(
+                            "flex items-center gap-1.5 h-9 pl-3 pr-2 rounded-lg border text-[11px] font-medium transition-all shrink-0 cursor-pointer",
+                            thresholdEnabled
+                              ? "border-gold/40 bg-gold/[0.08] text-gold hover:bg-gold/[0.12]"
+                              : "border-white/10 bg-white/[0.03] text-muted-foreground hover:text-foreground hover:border-white/20"
+                          )}
+                        >
+                          <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
+                          <span>Threshold</span>
+                          {thresholdEnabled && (
+                            <span className="ml-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-gold/20 text-gold tabular-nums whitespace-nowrap">
+                              {thresholdMetric === "cost" ? "Spend" : "Impr."} &lt; {thresholdValue} · min {minVisiblePerGroup}
+                            </span>
+                          )}
+                        </button>
+                      </PopoverTrigger>
+
+                      <PopoverContent align="end" className="w-72 p-0 overflow-hidden">
+                        {/* Header */}
+                        <div className="px-4 pt-4 pb-3 flex items-center justify-between gap-4">
+                          <div>
+                            <p className="text-sm font-semibold text-foreground">Threshold filter</p>
+                            <p className="text-[11px] text-muted-foreground mt-0.5 whitespace-nowrap">
+                              Hide low-data creatives per group
+                            </p>
+                          </div>
+                          <Switch
+                            checked={thresholdEnabled}
+                            onCheckedChange={setThresholdEnabled}
+                            className="shrink-0"
+                          />
+                        </div>
+
+                        <div className="h-px bg-white/[0.06]" />
+
+                        {/* Controls */}
+                        <div className={cn(
+                          "px-4 py-3 space-y-3 transition-opacity",
+                          !thresholdEnabled && "opacity-40 pointer-events-none select-none"
+                        )}>
+                          {/* Metric */}
+                          <div className="flex items-center justify-between gap-3">
+                            <label className="text-[11px] text-muted-foreground shrink-0">Metric</label>
+                            <Select
+                              value={thresholdMetric}
+                              onValueChange={v => setThresholdMetric(v as "impressions" | "cost")}
+                            >
+                              <SelectTrigger className="h-8 text-xs w-36">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="impressions">Impressions</SelectItem>
+                                <SelectItem value="cost">Spend</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          {/* Hide if < */}
+                          <div className="flex items-center justify-between gap-3">
+                            <label className="text-[11px] text-muted-foreground shrink-0">Hide if &lt;</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={thresholdValue}
+                              onChange={e => setThresholdValue(Math.max(0, parseInt(e.target.value) || 0))}
+                              className="w-36 h-8 text-xs bg-white/[0.05] border border-white/10 rounded-md px-3 text-right tabular-nums text-foreground focus:outline-none focus:border-gold/40"
+                            />
+                          </div>
+                          {/* Min per group */}
+                          <div className="flex items-center justify-between gap-3">
+                            <label className="text-[11px] text-muted-foreground shrink-0">Min per group</label>
+                            <input
+                              type="number"
+                              min={1}
+                              value={minVisiblePerGroup}
+                              onChange={e => setMinVisiblePerGroup(Math.max(1, parseInt(e.target.value) || 1))}
+                              className="w-36 h-8 text-xs bg-white/[0.05] border border-white/10 rounded-md px-3 text-right tabular-nums text-foreground focus:outline-none focus:border-gold/40"
+                            />
+                          </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
                   </div>
                 )}
               </div>
@@ -1083,6 +1199,7 @@ function Portal() {
                     rowHeight={rowHeight}
                     dateRange={dateRangeLabel}
                     onCreativeClick={openDetail}
+                    exportRef={topPdfRef}
                   />
                 </div>
               )}
