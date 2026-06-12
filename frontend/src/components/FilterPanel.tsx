@@ -120,7 +120,7 @@ export function FilterPanel({
         <Divider />
 
         {/* ── Search ── */}
-        <div className="flex items-center gap-1.5 h-8 px-2.5 rounded-md bg-white/[0.03] border border-white/[0.06] focus-within:border-[var(--gold)]/30 transition-colors min-w-[140px] max-w-[220px] flex-1">
+        <div className="flex items-center gap-1.5 h-8 px-2.5 rounded-md bg-white/[0.03] border border-white/[0.06] focus-within:border-[var(--gold)]/30 transition-colors min-w-[140px] flex-1">
           <Search className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           <input
             placeholder="Search…"
