@@ -1,6 +1,4 @@
 {
-  "buildCommand": "rm -rf node_modules package-lock.json bun.lockb && npm install && npm run build",
-  "installCommand": "echo 'Skipping default install (handled in buildCommand)'",
-  "outputDirectory": ".vercel/output",
+  "buildCommand": "npm run build",
   "framework": null
 }

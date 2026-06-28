@@ -827,7 +827,7 @@ export async function exportCreativePdf(data: CreativePdfData): Promise<void> {
 // ── Row types for the dashboard table PDF ─────────────────────────────────────
 export type PdfTableRow =
   | { kind: "total";    count: number;  metrics: ComputedMetrics }
-  | { kind: "group";    label: string;  dimLabel: string; depth: number; count: number; metrics: ComputedMetrics; creative?: Creative }
+  | { kind: "group";    label: string;  dimLabel: string; depth: number; count: number; metrics: ComputedMetrics }
   | { kind: "creative"; creative: Creative; metrics: ComputedMetrics; depth: number }
   | { kind: "n-more";   depth: number;  hiddenCount: number; videoCount: number; imageCount: number; textCount: number; metrics: ComputedMetrics; thumbnailUrls: string[] };
 
@@ -948,7 +948,7 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
     let cy = START_Y;
     for (let i = 0; i < tableRows.length; i++) {
       const r  = tableRows[i];
-      const rh = r.kind === "total" ? TOTAL_H : (r.kind === "group" && !r.creative) ? GROUP_H : CREATIVE_H; // n-more uses CREATIVE_H
+      const rh = r.kind === "total" ? TOTAL_H : r.kind === "group" ? GROUP_H : CREATIVE_H; // n-more uses CREATIVE_H
       if (cy + rh > PAGE_THRESHOLD) {
         const ctx = [...stack];
         pageDefs.push({ startIdx: i, groupCtx: ctx, pageNum: pageDefs.length + 1, isFirstPage: false });
@@ -962,7 +962,7 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
   const totalPages = pageDefs.length;
 
   // ── Pass 2: Per-page heights ───────────────────────────────────────────────
-  const rowH = (r: PdfTableRow) => r.kind === "total" ? TOTAL_H : (r.kind === "group" && !r.creative) ? GROUP_H : CREATIVE_H; // n-more and creative both = CREATIVE_H
+  const rowH = (r: PdfTableRow) => r.kind === "total" ? TOTAL_H : r.kind === "group" ? GROUP_H : CREATIVE_H; // n-more and creative both = CREATIVE_H
   const pageHeights = pageDefs.map((pd, pi) => {
     const endIdx = pageDefs[pi + 1]?.startIdx ?? tableRows.length;
     const dataH  = tableRows.slice(pd.startIdx, endIdx).reduce((s, r) => s + rowH(r), 0);
@@ -979,7 +979,7 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
 
   // ── Pre-load thumbnails for all creative rows in parallel ──────────────────
   const imgMap = new Map<string, HTMLImageElement>();
-  const creativeRows = tableRows.filter((r): r is Extract<PdfTableRow, { kind: "creative" | "group" }> => r.kind === "creative" || (r.kind === "group" && !!r.creative));
+  const creativeRows = tableRows.filter((r): r is Extract<PdfTableRow, { kind: "creative" }> => r.kind === "creative");
   const nMoreRows    = tableRows.filter((r): r is Extract<PdfTableRow, { kind: "n-more"    }> => r.kind === "n-more");
   await Promise.all([
     ...creativeRows.map(async (r) => {
@@ -1076,10 +1076,7 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
     ln(MH, y+COL_H, MH+CW, y+COL_H, GOLD, 0.35);
     // Breadcrumb of hierarchy
     tx("HIERARCHY", MH+4, y+4, 5, MUTED, true);
-    const breadcrumbs = hierarchyLabels.includes("Creative")
-      ? hierarchyLabels
-      : [...hierarchyLabels, "Creative"];
-    tx(breadcrumbs.join("  ›  "), MH+4, y+8, 6.5, TEXT, true);
+    tx([...hierarchyLabels, "Creative"].join("  ›  "), MH+4, y+8, 6.5, TEXT, true);
     for (let i = 0; i < enabledColumns.length; i++) {
       const key = enabledColumns[i];
       tx(COL_ABBR[key]??key, MH+LABEL_W+i*(MCOL_W+MCOL_GAP)+MCOL_W, y+6.5, 6.2, GOLD, true, "right");
@@ -1294,7 +1291,7 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
       y += TOTAL_H;
 
     // Group row
-    } else if (row.kind === "group" && !row.creative) {
+    } else if (row.kind === "group") {
       drawTreeConnectors(i, row.depth, y, GROUP_H);
       drawGroupRowAt(row, y, false);
       y += GROUP_H;
@@ -1486,10 +1483,8 @@ export async function exportDashboardPdf(data: DashboardPdfData): Promise<void> 
       }
 
       // Tags row below label
-      const isGroupCreative = row.kind === "group";
-      const tags = isGroupCreative
-        ? [creative.creative_type]
-        : [creative.creative_type, creative.city, creative.funnel, creative.category].filter(Boolean).slice(0, 4);
+      const tags = [creative.creative_type, creative.city, creative.funnel, creative.category]
+        .filter(Boolean).slice(0, 4);
       let tagX = textX;
       const tagY = nameTopY + nameLines.length * 3.6 + subLines.length * 2.8 + 3.2;
       pdf.setFontSize(5.5);

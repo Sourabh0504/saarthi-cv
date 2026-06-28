@@ -99,7 +99,6 @@ function buildPdfTableRows(
   const recurse = (items: typeof rows, dims: Dim[], depth: number, groupKey: string) => {
     if (dims.length === 0 || items.length === 0) {
       if (!includeCreatives) return;
-      if (hierarchy.includes("creative")) return;
 
       // Apply threshold if enabled
       if (threshold?.enabled && threshold.value > 0) {
@@ -188,7 +187,7 @@ function buildPdfTableRows(
         ),
       );
       const childKey = `${groupKey}>${dim}:${label}`;
-      result.push({ kind: "group", label, dimLabel: DIM_META[dim].label, depth, count: group.length, metrics: gm, creative: dim === "creative" ? group[0]?.creative : undefined });
+      result.push({ kind: "group", label, dimLabel: DIM_META[dim].label, depth, count: group.length, metrics: gm });
       recurse(group, rest, depth + 1, childKey);
     }
   };

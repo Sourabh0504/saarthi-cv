@@ -130,9 +130,6 @@ function buildTree(
 
   const build = (items: Row[], depth: number, parentKey: string): AggNode[] => {
     if (depth >= hierarchy.length) {
-      if (hierarchy.includes("creative")) {
-        return [];
-      }
       const leaves = items.map(r => ({
         key:            `${parentKey}>${r.creative.creative_id}`,
         label:          r.creative.creative_url ?? r.creative.headline ?? r.creative.creative_id,
@@ -167,7 +164,6 @@ function buildTree(
         compareMetrics: aggregateCmp(list, cmpMap),
         count:          list.length,
         children:       build(list, depth + 1, key),
-        creative:       dim === "creative" ? list[0]?.creative : undefined,
       });
     }
     assignShare(nodes);
@@ -768,31 +764,27 @@ export function DirectoryTree({
                     >
                       {DIM_META[dim].label}
                     </button>
-                    {(i < hierarchy.length - 1 || !hierarchy.includes("creative")) && (
-                      <span className="text-white/15 text-[9px] mx-1 select-none">›</span>
-                    )}
+                    <span className="text-white/15 text-[9px] mx-1 select-none">›</span>
                   </span>
                 );
               })}
-              {!hierarchy.includes("creative") && (
-                (() => {
-                  const active = activeLevel === hierarchy.length;
-                  return (
-                    <button
-                      type="button"
-                      onClick={() => setActiveLevel(hierarchy.length)}
-                      title="Expand all levels to creatives"
-                      className={cn(
-                        "text-[9px] uppercase tracking-widest font-semibold transition-all duration-150 shrink-0",
-                        active ? "text-gold" : "text-white/30 hover:text-white/60",
-                      )}
-                      style={undefined}
-                    >
-                      Creative
-                    </button>
-                  );
-                })()
-              )}
+              {(() => {
+                const active = activeLevel === hierarchy.length;
+                return (
+                  <button
+                    type="button"
+                    onClick={() => setActiveLevel(hierarchy.length)}
+                    title="Expand all levels to creatives"
+                    className={cn(
+                      "text-[9px] uppercase tracking-widest font-semibold transition-all duration-150 shrink-0",
+                      active ? "text-gold" : "text-white/30 hover:text-white/60",
+                    )}
+                    style={undefined}
+                  >
+                    Creative
+                  </button>
+                );
+              })()}
             </div>
             {cols.map(c => (
               <button
@@ -1038,17 +1030,13 @@ export function DirectoryTree({
                         {isCreative && node.creative && (
                           <div className="text-[11px] text-muted-foreground truncate mt-0.5 flex items-center gap-1.5 flex-wrap">
                             <span className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/10">{node.creative.creative_type}</span>
-                            {!hasChildren && (
-                              <>
-                                <span>{node.creative.city}</span>
-                                <span>·</span>
-                                <span>{node.creative.category}</span>
-                                <span>·</span>
-                                <span>{node.creative.age_group}</span>
-                                <span>·</span>
-                                <span className="text-gold/80">{node.creative.funnel}</span>
-                              </>
-                            )}
+                            <span>{node.creative.city}</span>
+                            <span>·</span>
+                            <span>{node.creative.category}</span>
+                            <span>·</span>
+                            <span>{node.creative.age_group}</span>
+                            <span>·</span>
+                            <span className="text-gold/80">{node.creative.funnel}</span>
                           </div>
                         )}
                       </div>

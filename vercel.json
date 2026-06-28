@@ -1,6 +1,0 @@
-{
-  "buildCommand": "cd frontend && rm -rf node_modules package-lock.json bun.lockb && npm install && npm run build",
-  "installCommand": "echo 'Skipping root install (handled in buildCommand)'",
-  "outputDirectory": "frontend/.vercel/output",
-  "framework": null
-}
