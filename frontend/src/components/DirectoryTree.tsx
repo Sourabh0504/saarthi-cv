@@ -804,7 +804,7 @@ export function DirectoryTree({
                   </span>
                 );
               })}
-              {(() => {
+              {!hierarchy.includes("creative") && (() => {
                 const active = activeLevel === hierarchy.length;
                 return (
                   <button
