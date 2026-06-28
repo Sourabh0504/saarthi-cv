@@ -786,6 +786,7 @@ export function DirectoryTree({
             <div className="py-2.5 px-3 flex items-center overflow-hidden whitespace-nowrap min-w-0">
               {hierarchy.map((dim, i) => {
                 const active = activeLevel === i;
+                const isLast = i === hierarchy.length - 1 && hierarchy.includes("creative");
                 return (
                   <span key={dim} className="flex items-center shrink-0">
                     <button
@@ -800,7 +801,7 @@ export function DirectoryTree({
                     >
                       {DIM_META[dim].label}
                     </button>
-                    <span className="text-white/15 text-[9px] mx-1 select-none">›</span>
+                    {!isLast && <span className="text-white/15 text-[9px] mx-1 select-none">›</span>}
                   </span>
                 );
               })}
