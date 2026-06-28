@@ -96,9 +96,13 @@ function buildPdfTableRows(
 
   const getYtId = (url: string) => url.match(/(?:youtu\.be\/|v=|embed\/)([\w-]{11})/)?.[1] ?? null;
 
+  // When the hierarchy itself contains "creative", the creative dim branch
+  // already emits creative rows — skip the implicit leaf emission below to avoid duplicates.
+  const hierarchyHasCreative = hierarchy.includes("creative");
+
   const recurse = (items: typeof rows, dims: Dim[], depth: number, groupKey: string) => {
     if (dims.length === 0 || items.length === 0) {
-      if (!includeCreatives) return;
+      if (!includeCreatives || hierarchyHasCreative) return;
 
       // Apply threshold if enabled
       if (threshold?.enabled && threshold.value > 0) {
