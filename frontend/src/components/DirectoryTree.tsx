@@ -129,6 +129,7 @@ function buildTree(
   };
 
   const build = (items: Row[], depth: number, parentKey: string): AggNode[] => {
+    // Past the last dim — emit implicit creative leaves (legacy fallback when hierarchy has no explicit "creative" dim)
     if (depth >= hierarchy.length) {
       const leaves = items.map(r => ({
         key:            `${parentKey}>${r.creative.creative_id}`,
@@ -143,7 +144,42 @@ function buildTree(
       assignShare(leaves);
       return sortNodes(leaves);
     }
-    const dim    = hierarchy[depth];
+    const dim = hierarchy[depth];
+
+    // Creative as an explicit dim → group rows by creative_url so the same
+    // creative used across multiple cities/campaigns/ad-groups merges into one node.
+    if (dim === "creative") {
+      const map = new Map<string, Row[]>();
+      for (const r of items) {
+        const k   = r.creative.creative_url || r.creative.creative_id;
+        const arr = map.get(k) ?? [];
+        arr.push(r);
+        map.set(k, arr);
+      }
+      const remaining = hierarchy.length - depth - 1;
+      const nodes: AggNode[] = [];
+      for (const [k, list] of map) {
+        const key = `${parentKey}>creative:${k}`;
+        const rep = list[0].creative;
+        const node: AggNode = {
+          key,
+          label:          rep.creative_url ?? rep.headline ?? rep.creative_id,
+          depth,
+          dim:            "creative",
+          metrics:        aggregate(list),
+          compareMetrics: aggregateCmp(list, cmpMap),
+          count:          list.length,
+          creative:       rep,
+        };
+        if (remaining > 0 && list.length > 0) {
+          node.children = build(list, depth + 1, key);
+        }
+        nodes.push(node);
+      }
+      assignShare(nodes);
+      return sortNodes(nodes);
+    }
+
     const getter = DIM_META[dim].get;
     const map    = new Map<string, Row[]>();
     for (const r of items) {
