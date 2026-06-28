@@ -162,6 +162,42 @@ function buildPdfTableRows(
     }
 
     const [dim, ...rest] = dims;
+
+    // "creative" as an explicit dim — group items by creative_url so the same
+    // creative used across cities/campaigns merges into one row in the PDF.
+    if (dim === "creative") {
+      const groups = new Map<string, typeof rows>();
+      for (const item of items) {
+        const key = item.creative.creative_url || item.creative.creative_id;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(item);
+      }
+      const sorted = [...groups.entries()].sort(
+        ([, a], [, b]) =>
+          b.reduce((s, r) => s + r.metrics.cost, 0) -
+          a.reduce((s, r) => s + r.metrics.cost, 0),
+      );
+      for (const [key, group] of sorted) {
+        const rep = group[0].creative;
+        const gm = computeMetrics(
+          group.reduce(
+            (acc, r) => ({
+              impressions: acc.impressions + r.metrics.impressions,
+              clicks:      acc.clicks      + r.metrics.clicks,
+              cost:        acc.cost        + r.metrics.cost,
+              conversions: acc.conversions + r.metrics.conversions,
+            }),
+            { impressions: 0, clicks: 0, cost: 0, conversions: 0 },
+          ),
+        );
+        result.push({ kind: "creative", creative: rep, metrics: gm, depth });
+        if (rest.length > 0) {
+          recurse(group, rest, depth + 1, `${groupKey}>creative:${key}`);
+        }
+      }
+      return;
+    }
+
     const getVal = DIM_META[dim].get;
     const groups = new Map<string, typeof rows>();
     for (const item of items) {
