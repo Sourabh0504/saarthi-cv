@@ -128,9 +128,12 @@ function buildTree(
     }
   };
 
+  const hasExplicitCreative = hierarchy.includes("creative" as Dim);
+
   const build = (items: Row[], depth: number, parentKey: string): AggNode[] => {
-    // Past the last dim — emit implicit creative leaves (legacy fallback when hierarchy has no explicit "creative" dim)
+    // Past the last dim — emit implicit creative leaves only when hierarchy doesn't already include "creative".
     if (depth >= hierarchy.length) {
+      if (hasExplicitCreative) return [];
       const leaves = items.map(r => ({
         key:            `${parentKey}>${r.creative.creative_id}`,
         label:          r.creative.creative_url ?? r.creative.headline ?? r.creative.creative_id,
