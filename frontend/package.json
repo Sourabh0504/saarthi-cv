@@ -3,6 +3,9 @@
   "private": true,
   "sideEffects": false,
   "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
@@ -71,6 +74,9 @@
     "vaul": "^1.1.2",
     "vite-tsconfig-paths": "^6.0.2",
     "zod": "^3.24.2"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-x64-gnu": "4.60.4"
   },
   "devDependencies": {
     "@eslint/js": "^9.32.0",
