@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useGoogleLogin } from "@react-oauth/google";
 import { Gem, Lock, AlertCircle, Loader2, Chrome } from "lucide-react";
@@ -45,7 +45,7 @@ function LoginConfigurationMissing() {
           Add the Google Client ID to enable restricted Google sign-in for approved users.
         </p>
         <Link to="/" className="mt-6 inline-flex text-sm font-semibold text-[oklch(0.78_0.15_85)] hover:opacity-80">
-          Back to dashboard
+          Back to home
         </Link>
       </div>
     </div>

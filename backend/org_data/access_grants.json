@@ -1,0 +1,6 @@
+{
+  "grants": [
+    { "email": "sourabhchaudhari8830@gmail.com", "role": "super_admin", "scope_type": "global", "scope_id": "*" },
+    { "email": "sourabh.chaudhari@dentsu.com", "role": "cluster_head", "scope_type": "cluster", "scope_id": "cluster_default" }
+  ]
+}

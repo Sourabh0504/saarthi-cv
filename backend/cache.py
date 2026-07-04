@@ -109,6 +109,20 @@ def invalidate_key(key: str) -> None:
         print(f"[cache] SQLite delete error (non-fatal): {exc}")
 
 
+def invalidate_prefix(prefix: str) -> None:
+    """
+    Evict every cache key starting with `prefix` from both tiers.
+    Scopes a sync/invalidate action to a single channel (e.g. "ch_aukera_google_ads:")
+    instead of wiping every channel's cached data.
+    """
+    for k in [k for k in list(_cache.keys()) if k.startswith(prefix)]:
+        _cache.pop(k, None)
+    try:
+        db_module.db_delete_prefix(prefix)
+    except Exception as exc:
+        print(f"[cache] SQLite prefix-delete error (non-fatal): {exc}")
+
+
 def get_etag(key: str) -> str | None:
     """
     Return the stored SHA-256 checksum for a cache key, used as an HTTP ETag.

@@ -25,7 +25,8 @@
  * Store layout:
  *   DB name:    "cv_cache"
  *   Store name: "raw_performance"
- *   Key:        string (currently always "raw_daily")
+ *   Key:        string — one entry per channel, e.g. "raw_daily_ch_aukera_google_ads"
+ *               (see rawPerformanceIdbKey() in lib/api.ts)
  *   Value:      CvCacheEntry
  */
 
@@ -133,7 +134,9 @@ export async function idbDelete(key: string): Promise<void> {
 }
 
 /**
- * Clear the entire store. Called on forced sync (POST /api/sync).
+ * Clear every channel's cached entry from the store. Not used by the normal
+ * per-channel sync flow (which uses idbDelete on a single channel's key) —
+ * kept as a utility for a full local cache reset if ever needed.
  */
 export async function idbClear(): Promise<void> {
   try {

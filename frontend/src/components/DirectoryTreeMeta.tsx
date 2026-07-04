@@ -2,8 +2,8 @@ import { useMemo, useState, useRef, useEffect } from "react";
 import { ChevronRight, ChevronDown, Video as VideoIcon, FileText, Sparkles, ExternalLink, ArrowUpDown, ArrowDownUp, Play } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Creative } from "@/lib/api";
-import { computeMetrics, fmtINR, fmtINR0, fmtNum, fmtPct, type ComputedMetrics } from "@/lib/metrics";
-import { type Dim, DIM_META } from "@/lib/hierarchy";
+import { computeMetrics, fmtINR, fmtINR0, fmtNum, fmtPct, type ComputedMetrics, upgradeMetaImageUrl } from "@/lib/metrics";
+import { type Dim, DIM_META } from "@/lib/hierarchy.meta";
 import { cn, copyText } from "@/lib/utils";
 
 interface Row {
@@ -15,7 +15,6 @@ interface Props {
   rows:              Row[];
   visibleCols:       Record<string, boolean>;
   hierarchy:         Dim[];
-  structureOnly?:    boolean;
   creativeRowHeight?: number;
   onCreativeClick?:  (creative: Creative) => void;
   sortBy?:           string | null;
@@ -75,13 +74,25 @@ type FlatItem =
 
 function aggregate(rows: Row[]): ComputedMetrics {
   const t = { impressions: 0, clicks: 0, cost: 0, conversions: 0 };
+  let lpv = 0, thru = 0, hrWsum = 0, wtWsum = 0;
   for (const r of rows) {
-    t.impressions += r.metrics.impressions;
-    t.clicks      += r.metrics.clicks;
-    t.cost        += r.metrics.cost;
-    t.conversions += r.metrics.conversions;
+    const m = r.metrics;
+    t.impressions += m.impressions;
+    t.clicks      += m.clicks;
+    t.cost        += m.cost;
+    t.conversions += m.conversions;
+    lpv    += m.landing_page_views   ?? 0;
+    thru   += m.thruplays            ?? 0;
+    hrWsum += (m.hook_rate            ?? 0) * m.impressions;
+    wtWsum += (m.video_avg_watch_time ?? 0) * (m.thruplays ?? 0);
   }
-  return computeMetrics(t);
+  return {
+    ...computeMetrics(t),
+    landing_page_views:   lpv,
+    thruplays:            thru,
+    hook_rate:            t.impressions > 0 ? hrWsum / t.impressions : 0,
+    video_avg_watch_time: thru > 0 ? wtWsum / thru : 0,
+  };
 }
 
 function aggregateCmp(rows: Row[], map?: Map<string, ComputedMetrics>): ComputedMetrics | undefined {
@@ -128,15 +139,11 @@ function buildTree(
     }
   };
 
-  const hasExplicitCreative = hierarchy.includes("creative" as Dim);
-
   const build = (items: Row[], depth: number, parentKey: string): AggNode[] => {
-    // Past the last dim — emit implicit creative leaves only when hierarchy doesn't already include "creative".
     if (depth >= hierarchy.length) {
-      if (hasExplicitCreative) return [];
       const leaves = items.map(r => ({
         key:            `${parentKey}>${r.creative.creative_id}`,
-        label:          r.creative.creative_url ?? r.creative.headline ?? r.creative.creative_id,
+        label:          r.creative.ad_name || r.creative.headline || r.creative.creative_url || r.creative.creative_id,
         depth,
         dim:            "creative" as const,
         metrics:        r.metrics,
@@ -147,42 +154,7 @@ function buildTree(
       assignShare(leaves);
       return sortNodes(leaves);
     }
-    const dim = hierarchy[depth];
-
-    // Creative as an explicit dim → group rows by creative_url so the same
-    // creative used across multiple cities/campaigns/ad-groups merges into one node.
-    if (dim === "creative") {
-      const map = new Map<string, Row[]>();
-      for (const r of items) {
-        const k   = r.creative.creative_url || r.creative.creative_id;
-        const arr = map.get(k) ?? [];
-        arr.push(r);
-        map.set(k, arr);
-      }
-      const remaining = hierarchy.length - depth - 1;
-      const nodes: AggNode[] = [];
-      for (const [k, list] of map) {
-        const key = `${parentKey}>creative:${k}`;
-        const rep = list[0].creative;
-        const node: AggNode = {
-          key,
-          label:          rep.creative_url ?? rep.headline ?? rep.creative_id,
-          depth,
-          dim:            "creative",
-          metrics:        aggregate(list),
-          compareMetrics: aggregateCmp(list, cmpMap),
-          count:          list.length,
-          creative:       rep,
-        };
-        if (remaining > 0 && list.length > 0) {
-          node.children = build(list, depth + 1, key);
-        }
-        nodes.push(node);
-      }
-      assignShare(nodes);
-      return sortNodes(nodes);
-    }
-
+    const dim    = hierarchy[depth];
     const getter = DIM_META[dim].get;
     const map    = new Map<string, Row[]>();
     for (const r of items) {
@@ -304,11 +276,6 @@ function insertNMoreRows(
   return result;
 }
 
-function getYouTubeId(url: string): string | null {
-  const m = url.match(/(?:youtu\.be\/|v=|embed\/)([\w-]{11})/);
-  return m ? m[1] : null;
-}
-
 function NMoreCollage({ hiddenRows, size }: { hiddenRows: Row[]; size: number }) {
   const slots  = Math.min(4, hiddenRows.length);
   const toShow = hiddenRows.slice(0, slots);
@@ -331,19 +298,15 @@ function NMoreCollage({ hiddenRows, size }: { hiddenRows: Row[]; size: number })
     >
       {toShow.map((r, idx) => {
         const isLastSlot = idx === slots - 1 && extra > 0;
-        const ytId = r.creative.creative_type === "Video"
-          ? getYouTubeId(r.creative.creative_url ?? "")
-          : null;
-        const imgSrc = ytId
-          ? `https://i.ytimg.com/vi/${ytId}/mqdefault.jpg`
-          : r.creative.creative_type === "Image"
-          ? r.creative.creative_url
+        // Meta: creative_url is the preview image for both Image and Video
+        const imgSrc = (r.creative.creative_type === "Image" || r.creative.creative_type === "Video")
+          ? (r.creative.creative_url ?? null)
           : null;
 
         return (
           <div key={r.creative.creative_id} className="relative overflow-hidden bg-white/[0.04]">
             {imgSrc ? (
-              <img src={imgSrc} alt="" className="w-full h-full object-cover" loading="lazy" />
+              <img src={upgradeMetaImageUrl(imgSrc)} alt="" className="w-full h-full object-cover" loading="lazy" style={{ imageRendering: "auto" }} />
             ) : (
               <div className="w-full h-full flex items-center justify-center">
                 <FileText className="text-muted-foreground/40" style={{ width: half * 0.45, height: half * 0.45 }} />
@@ -384,30 +347,30 @@ function CreativeThumb({ creative, size }: { creative: Creative; size: number })
     }
     return (
       <img
-        src={creative.creative_url}
+        src={upgradeMetaImageUrl(creative.creative_url) || undefined}
         alt={creative.headline ?? ""}
-        style={{ height: size, width: "auto", maxWidth: maxW }}
+        style={{ height: size, width: "auto", maxWidth: maxW, imageRendering: "auto" }}
         loading="lazy"
-        className="rounded-lg object-contain border border-border shrink-0 shadow-card transition-transform"
+        className="rounded-lg object-cover border border-border shrink-0 shadow-card transition-transform"
       />
     );
   }
 
   if (creative.creative_type === "Video") {
-    const id = getYouTubeId(creative.creative_url);
-    // hqdefault thumbnails are 4:3 — natural width = size × (4/3)
+    // Meta: creative_url is the preview image for videos (Facebook CDN)
     const videoW = Math.min(Math.round(size * (4 / 3)), maxW);
     return (
       <div
         style={{ height: size, width: videoW }}
         className="rounded-lg overflow-hidden border border-border shrink-0 relative bg-black shadow-card"
       >
-        {id && (
+        {creative.creative_url && (
           <img
-            src={`https://i.ytimg.com/vi/${id}/hqdefault.jpg`}
+            src={upgradeMetaImageUrl(creative.creative_url)}
             alt=""
             loading="lazy"
-            className="w-full h-full object-contain"
+            className="w-full h-full object-cover"
+            style={{ imageRendering: "auto" }}
           />
         )}
         <div className="absolute inset-0 flex items-center justify-center bg-black/30">
@@ -432,12 +395,16 @@ const COL_DEFS: Array<{ key: string; label: string; render: (m: ComputedMetrics)
   { key: "impressions", label: "Impr.",  render: m => fmtNum(m.impressions) },
   { key: "clicks",      label: "Clicks", render: m => fmtNum(m.clicks) },
   { key: "cost",        label: "Spend",  render: m => fmtINR0(m.cost) },
-  { key: "conversions", label: "Conv.",  render: m => m.conversions.toFixed(1) },
+  { key: "conversions", label: "Leads",  render: m => m.conversions.toFixed(1) },
   { key: "ctr",         label: "CTR",    render: m => fmtPct(m.ctr) },
   { key: "cpc",         label: "CPC",    render: m => fmtINR(m.cpc) },
   { key: "cpm",         label: "CPM",    render: m => fmtINR(m.cpm) },
-  { key: "cr",          label: "CR",     render: m => fmtPct(m.cr) },
-  { key: "cpa",         label: "CPA",    render: m => fmtINR(m.cpa) },
+  { key: "cvr",         label: "CVR",    render: m => fmtPct(m.cvr) },
+  { key: "cpl",         label: "CPL",    render: m => fmtINR(m.cpl) },
+  { key: "landing_page_views",   label: "LPV",       render: m => fmtNum(m.landing_page_views ?? 0) },
+  { key: "thruplays",            label: "ThruPlay",  render: m => fmtNum(m.thruplays ?? 0) },
+  { key: "hook_rate",            label: "Hook %",    render: m => fmtPct(m.hook_rate ?? 0) },
+  { key: "video_avg_watch_time", label: "Watch s",   render: m => (m.video_avg_watch_time ?? 0).toFixed(1) + "s" },
 ];
 
 function CopyableValue({ text, className }: { text: string; className?: string }) {
@@ -520,49 +487,15 @@ function DirectoryHoverPreview({
   creative: Creative;
   hoverStyle: React.CSSProperties;
 }) {
-  const ytId = creative.creative_type === "Video" && creative.creative_url ? getYouTubeId(creative.creative_url) : null;
-  const isImg = creative.creative_type === "Image" && !!creative.creative_url;
-  const isShort = !!creative.creative_url?.includes("/shorts/");
+  // Meta: creative_url is the preview image for both Image and Video
+  const isImg   = creative.creative_type === "Image"  && !!creative.creative_url;
+  const isVideo = creative.creative_type === "Video"  && !!creative.creative_url;
+  const showsImg = isImg || isVideo;
 
-  const previewW = isShort ? 337.5 : 480;
-  const previewH = isShort ? 600 : 270;
-
-  // Cascade high-quality thumbnails
-  const [ytThumbUrl, setYtThumbUrl] = useState(ytId ? `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg` : "");
-
-  // Auto-play timer
-  const [shouldPlay, setShouldPlay] = useState(false);
-  const [progressActive, setProgressActive] = useState(false);
-
-  useEffect(() => {
-    if (ytId) {
-      setYtThumbUrl(`https://img.youtube.com/vi/${ytId}/maxresdefault.jpg`);
-      setShouldPlay(false);
-      setProgressActive(false);
-
-      const timer = setTimeout(() => {
-        setShouldPlay(true);
-      }, 2000);
-
-      const raf = requestAnimationFrame(() => {
-        setProgressActive(true);
-      });
-
-      return () => {
-        clearTimeout(timer);
-        cancelAnimationFrame(raf);
-      };
-    }
-  }, [ytId]);
-
-  const handleThumbError = () => {
-    if (!ytId) return;
-    if (ytThumbUrl.includes("maxresdefault")) {
-      setYtThumbUrl(`https://img.youtube.com/vi/${ytId}/sddefault.jpg`);
-    } else if (ytThumbUrl.includes("sddefault")) {
-      setYtThumbUrl(`https://img.youtube.com/vi/${ytId}/hqdefault.jpg`);
-    }
-  };
+  // Fixed landscape preview box. The image fits by HEIGHT (object-contain) so it
+  // is never zoomed/cropped — square & portrait creatives show fully, centered.
+  const previewW = 480;
+  const previewH = 270;
 
   return (
     <div
@@ -573,47 +506,20 @@ function DirectoryHoverPreview({
            style={{ width: previewW, maxHeight: "92vh" }}>
         <div className="bg-black/40 relative flex items-center justify-center overflow-hidden"
              style={{ height: previewH }}>
-          {isImg && (
+          {showsImg && (
             <img
-              src={creative.creative_url}
-              alt={creative.headline ?? ""}
+              src={upgradeMetaImageUrl(creative.creative_url)}
+              alt={creative.ad_name || ""}
               className="block w-full h-full object-contain"
+              style={{ imageRendering: "auto" }}
             />
           )}
-          {ytId && (
-            <>
-              {shouldPlay ? (
-                <iframe
-                  src={`https://www.youtube.com/embed/${ytId}?autoplay=1&mute=0&enablejsapi=1`}
-                  title={creative.headline ?? "Creative Preview"}
-                  frameBorder="0"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                  allowFullScreen
-                  className="w-full h-full"
-                />
-              ) : (
-                <>
-                  <img
-                    src={ytThumbUrl}
-                    onError={handleThumbError}
-                    alt={creative.headline ?? ""}
-                    className="w-full h-full object-cover"
-                  />
-                  {/* Play icon overlay */}
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/20">
-                    <div className="w-14 h-14 rounded-full bg-black/60 border border-white/20 flex items-center justify-center
-                                    backdrop-blur-sm">
-                      <Play className="w-6 h-6 text-white fill-white ml-0.5 animate-pulse" />
-                    </div>
-                  </div>
-                  {/* Visual progress bar at bottom of thumbnail */}
-                  <div
-                    className="absolute bottom-0 left-0 h-1 bg-gold transition-all ease-linear duration-[2000ms]"
-                    style={{ width: progressActive ? "100%" : "0%" }}
-                  />
-                </>
-              )}
-            </>
+          {isVideo && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/10 pointer-events-none">
+              <div className="w-14 h-14 rounded-full bg-black/60 border border-white/20 flex items-center justify-center backdrop-blur-sm">
+                <Play className="w-6 h-6 text-white fill-white ml-0.5" />
+              </div>
+            </div>
           )}
           {creative.creative_type === "Text" && (
             <div className="w-full h-full p-6 bg-white text-[#202124] flex flex-col justify-center gap-2">
@@ -625,17 +531,22 @@ function DirectoryHoverPreview({
               <p className="text-sm text-[#4d5156] leading-snug">{creative.description}</p>
             </div>
           )}
-          {!isImg && !ytId && creative.creative_type !== "Text" && (
+          {!showsImg && creative.creative_type !== "Text" && (
             <div className="w-full h-[270px] flex items-center justify-center text-muted-foreground">No preview</div>
           )}
         </div>
 
-        <div className="p-3 space-y-1.5 bg-background/80">
-          <div className="font-display font-semibold text-sm truncate">{creative.headline ?? creative.creative_id}</div>
-          <div className="text-[11px] text-muted-foreground flex flex-wrap gap-1.5">
+        <div className="p-3 space-y-1 bg-background/80">
+          {/* Creative name (Meta "Ad name") */}
+          <div className="font-display font-semibold text-sm leading-snug break-words" title={creative.ad_name || creative.creative_id}>
+            {creative.ad_name || creative.headline || creative.creative_id}
+          </div>
+          {creative.ad_name && (
+            <div className="text-[10px] text-muted-foreground/60 truncate" title={creative.creative_id}>{creative.creative_id}</div>
+          )}
+          <div className="text-[11px] text-muted-foreground flex flex-wrap gap-1.5 pt-0.5">
             <span className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/10">{creative.creative_type}</span>
-            <span className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/10">{creative.city}</span>
-            <span className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/10">{creative.category}</span>
+            {creative.city && <span className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/10">{creative.city}</span>}
             <span className="px-1.5 py-0.5 rounded bg-gold/10 border border-gold/30 text-gold">{creative.funnel}</span>
           </div>
         </div>
@@ -646,11 +557,10 @@ function DirectoryHoverPreview({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function DirectoryTree({
+export function DirectoryTreeMeta({
   rows,
   visibleCols,
   hierarchy,
-  structureOnly    = false,
   creativeRowHeight = 64,
   onCreativeClick,
   sortBy: sortByProp,
@@ -703,8 +613,8 @@ export function DirectoryTree({
     setOpen(s);
   }, [activeLevel, tree]);
 
-  const cols      = structureOnly ? [] : COL_DEFS.filter(c => visibleCols[c.key]);
-  const showShare = !structureOnly && !!visibleCols.share_pct;
+  const cols      = COL_DEFS.filter(c => visibleCols[c.key]);
+  const showShare = !!visibleCols.share_pct;
   const toggle = (k: string) => {
     setOpen(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
   };
@@ -712,10 +622,10 @@ export function DirectoryTree({
 
   const flatNodes = useMemo(() => flattenTree(tree, open), [tree, open]);
   const flat = useMemo<FlatItem[]>(() => {
-    const shouldApply = thresholdEnabled && !structureOnly && (thresholdValue ?? 0) > 0;
+    const shouldApply = thresholdEnabled && (thresholdValue ?? 0) > 0;
     if (!shouldApply) return flatNodes.map(node => ({ kind: "node" as const, node }));
     return insertNMoreRows(flatNodes, rows, thresholdMetric, thresholdValue, minVisiblePerGroup, expandedNMore);
-  }, [flatNodes, rows, thresholdEnabled, structureOnly, thresholdMetric, thresholdValue, minVisiblePerGroup, expandedNMore]);
+  }, [flatNodes, rows, thresholdEnabled, thresholdMetric, thresholdValue, minVisiblePerGroup, expandedNMore]);
 
   // Group rows are taller when compare deltas are showing
   const groupRowH = compareMode ? 58 : 44;
@@ -754,14 +664,12 @@ export function DirectoryTree({
   let hoverStyle: React.CSSProperties | null = null;
   if (hover) {
     // Anchor preview to the right edge of the viewport, vertically centered.
-    // Width/height are intrinsic to the media (capped by max-w/max-h on the inner element).
     hoverStyle = {
       right: 24,
       top: "50%",
       transform: "translateY(-50%)",
     };
   }
-
 
   const metricColWidth = 120;
   const shareColWidth  = 100;
@@ -789,7 +697,6 @@ export function DirectoryTree({
             <div className="py-2.5 px-3 flex items-center overflow-hidden whitespace-nowrap min-w-0">
               {hierarchy.map((dim, i) => {
                 const active = activeLevel === i;
-                const isLast = i === hierarchy.length - 1 && hierarchy.includes("creative");
                 return (
                   <span key={dim} className="flex items-center shrink-0">
                     <button
@@ -800,15 +707,14 @@ export function DirectoryTree({
                         "text-[9px] uppercase tracking-widest font-semibold transition-all duration-150",
                         active ? "text-gold" : "text-white/30 hover:text-white/60",
                       )}
-                      style={undefined}
                     >
                       {DIM_META[dim].label}
                     </button>
-                    {!isLast && <span className="text-white/15 text-[9px] mx-1 select-none">›</span>}
+                    <span className="text-white/15 text-[9px] mx-1 select-none">›</span>
                   </span>
                 );
               })}
-              {!hierarchy.includes("creative") && (() => {
+              {(() => {
                 const active = activeLevel === hierarchy.length;
                 return (
                   <button
@@ -819,7 +725,6 @@ export function DirectoryTree({
                       "text-[9px] uppercase tracking-widest font-semibold transition-all duration-150 shrink-0",
                       active ? "text-gold" : "text-white/30 hover:text-white/60",
                     )}
-                    style={undefined}
                   >
                     Creative
                   </button>
@@ -861,15 +766,13 @@ export function DirectoryTree({
             <div className="py-2.5 px-3">
               <div className="flex items-center gap-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-gold" />
-                {structureOnly
-                  ? <span className="font-display font-bold text-sm tracking-tight text-gold">CREATIVE STRUCTURE</span>
-                  : <span className="font-display font-bold text-sm tracking-tight text-gold">TOTAL</span>}
+                <span className="font-display font-bold text-sm tracking-tight text-gold">TOTAL</span>
                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gold/15 border border-gold/30 text-gold">
                   {totalCreatives} creatives
                 </span>
               </div>
             </div>
-            {!structureOnly && cols.map(c => (
+            {cols.map(c => (
               <div key={c.key} className="py-2.5 px-3 tabular-nums whitespace-nowrap">
                 <MetricCell
                   colKey={c.key}
@@ -975,7 +878,7 @@ export function DirectoryTree({
                         </div>
                       </div>
                       {/* Muted metric cells — sum of hidden */}
-                      {!structureOnly && cols.map(c => (
+                      {cols.map(c => (
                         <div key={c.key} className="py-2 px-3 tabular-nums whitespace-nowrap text-sm text-right text-muted-foreground/50">
                           {c.render(item.metrics)}
                         </div>
@@ -1071,10 +974,6 @@ export function DirectoryTree({
                           <div className="text-[11px] text-muted-foreground truncate mt-0.5 flex items-center gap-1.5 flex-wrap">
                             <span className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/10">{node.creative.creative_type}</span>
                             <span>{node.creative.city}</span>
-                            <span>·</span>
-                            <span>{node.creative.category}</span>
-                            <span>·</span>
-                            <span>{node.creative.age_group}</span>
                             <span>·</span>
                             <span className="text-gold/80">{node.creative.funnel}</span>
                           </div>

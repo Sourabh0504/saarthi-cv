@@ -11,6 +11,7 @@ build/
 
 # Environment — NEVER commit real secrets
 .env
+org_data/org_secrets.json
 
 # Virtual environments
 venv/

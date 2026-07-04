@@ -14,7 +14,8 @@
  *   IndexedDB entry instantly — zero network transfer overhead.
  */
 
-import { idbGet, idbSet, idbClear, type CvCacheEntry } from "@/lib/idb";
+import { idbGet, idbSet, type CvCacheEntry } from "@/lib/idb";
+import { getStoredToken } from "@/lib/auth";
 
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:8000";
 
@@ -27,7 +28,11 @@ export interface Creative {
   creative_url:   string;
   creative_type:  "Image" | "Video" | "Text";
   campaign_name:  string;
-  funnel:         "TOFU" | "MOFU";
+  // Google emits strictly "TOFU" | "MOFU"; Meta emits its own funnel-stage
+  // strings (Awareness / Traffic / Conversions / ...). Widened to `string`
+  // so one Creative type serves both platforms — narrow at the call site
+  // (e.g. `creative.funnel === "MOFU"`) where Google-specific logic needs it.
+  funnel:         string;
   campaign_type:  string;
   ad_group:       string;
   city:           string;
@@ -36,8 +41,10 @@ export interface Creative {
   headline?:      string;
   description?:   string;
   status:         "Enabled" | "Paused";
-  // Which sheet this creative came from (present on /api/current-structure)
+  // Which sheet this creative came from (present on /api/current-structure) — Google only.
   source_sheet?:  "Current_Pmax" | "Current_Dgen";
+  // Meta "Ad name" — the human-readable creative name (Meta only; absent for Google).
+  ad_name?:       string;
   // Performance (present on /api/performance responses)
   impressions?:   number;
   clicks?:        number;
@@ -47,8 +54,15 @@ export interface Creative {
   ctr?:           number;
   cpc?:           number;
   cpm?:           number;
-  cr?:            number;
-  cpa?:           number;
+  cr?:            number;   // Google: conversion rate
+  cpa?:           number;   // Google: cost per acquisition
+  cvr?:           number;   // Meta: conversion rate (leads / clicks) — same value as cr
+  cpl?:           number;   // Meta: cost per lead (cost / leads) — same value as cpa
+  // Extra Meta-only metrics — always optional, absent on Google creatives.
+  landing_page_views?:   number;
+  thruplays?:            number;
+  hook_rate?:            number;
+  video_avg_watch_time?: number;
 }
 
 /**
@@ -112,8 +126,12 @@ async function apiFetch<T>(path: string, params?: Record<string, string>): Promi
     });
   }
 
+  const token = getStoredToken();
   const res = await fetch(url.toString(), {
-    headers: { "Accept": "application/json" },
+    headers: {
+      "Accept": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
   });
 
   if (!res.ok) {
@@ -124,17 +142,22 @@ async function apiFetch<T>(path: string, params?: Record<string, string>): Promi
   return res.json() as Promise<T>;
 }
 
+/** IndexedDB cache key for a channel's raw-daily dataset — every channel gets its own entry. */
+export function rawPerformanceIdbKey(channelId: string): string {
+  return `raw_daily_${channelId}`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API functions
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Fetch all creative metadata + performance metrics for a date range.
- * This is the main data source for the portal.
+ * Fetch all creative metadata + performance metrics for a date range, for one channel.
  * Also returns filter_options (cities, campaign_types, etc.) — always dynamic.
  */
-export async function fetchPerformance(start?: string, end?: string, status?: string): Promise<PerformanceResponse> {
+export async function fetchPerformance(channelId: string, start?: string, end?: string, status?: string): Promise<PerformanceResponse> {
   return apiFetch<PerformanceResponse>("/api/performance", {
+    channel_id: channelId,
     start: start ?? "",
     end: end ?? "",
     status: status ?? "",
@@ -142,12 +165,21 @@ export async function fetchPerformance(start?: string, end?: string, status?: st
 }
 
 /**
- * Force-clear the backend cache and pre-warm last 30 days.
- * Call this after manually updating the Google Sheet.
+ * Force-clear one channel's backend cache and pre-warm its default range.
+ * Call this after manually updating that channel's Google Sheet.
  */
-export async function syncCache(): Promise<{ status: string; message: string }> {
-  const res = await fetch(`${BASE}/api/sync`, { method: "POST" });
-  if (!res.ok) throw new Error(`Sync failed: ${res.statusText}`);
+export async function syncCache(channelId: string): Promise<{ status: string; message: string }> {
+  const token = getStoredToken();
+  const url = new URL(`${BASE}/api/sync`);
+  url.searchParams.set("channel_id", channelId);
+  const res = await fetch(url.toString(), {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail?.detail ?? `Sync failed: ${res.statusText}`);
+  }
   return res.json();
 }
 
@@ -171,12 +203,12 @@ export interface CurrentStructureResponse {
 }
 
 /**
- * Fetch the current live campaign structure from Current_Pmax + Current_Dgen sheets.
+ * Fetch the current live campaign structure from Current_Pmax + Current_Dgen sheets, for one channel.
  * Returns Video creatives with no performance metrics.
  * Uses a separate cache key from the performance data.
  */
-export async function fetchCurrentStructure(): Promise<CurrentStructureResponse> {
-  return apiFetch<CurrentStructureResponse>("/api/current-structure");
+export async function fetchCurrentStructure(channelId: string): Promise<CurrentStructureResponse> {
+  return apiFetch<CurrentStructureResponse>("/api/current-structure", { channel_id: channelId });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -194,6 +226,11 @@ export interface RawDailyRow {
   clicks:      number;
   cost:        number;
   conversions: number;
+  // Extra Meta-only per-day metrics (carried through; Google rows never set these).
+  landing_page_views?:   number;
+  thruplays?:            number;
+  hook_rate?:            number; // per-day fraction/percentage
+  video_avg_watch_time?: number; // per-day seconds
 }
 
 /** Dimension fields keyed by creative_id (no performance, no duplication). */
@@ -207,6 +244,8 @@ export interface CreativeDimensionMap {
     funnel:        string;
     ad_group:      string;
     status:        "Enabled" | "Paused";
+    // Meta "Ad name" — absent for Google.
+    ad_name?:      string;
   };
 }
 
@@ -223,7 +262,7 @@ export interface RawPerformanceResponse {
 }
 
 /**
- * Fetch ALL daily rows for ALL dates.
+ * Fetch ALL daily rows for ALL dates, for one channel.
  * The frontend aggregates by date range client-side — no re-fetch needed
  * when the user changes the date picker.
  *
@@ -233,18 +272,26 @@ export interface RawPerformanceResponse {
  *      → Backend returns 304 (data unchanged) → return IDB entry instantly.
  *      → Backend returns 200 (data changed)  → update IDB, return new data.
  *   3. If not found: normal fetch, store result in IDB.
+ *
+ * IDB entries are keyed per channel (rawPerformanceIdbKey) so switching
+ * between channels never serves one channel's cached data as another's.
  */
-export async function fetchRawPerformance(): Promise<RawPerformanceResponse> {
-  const IDB_KEY  = "raw_daily";
+export async function fetchRawPerformance(channelId: string): Promise<RawPerformanceResponse> {
+  const IDB_KEY  = rawPerformanceIdbKey(channelId);
   const cached   = await idbGet(IDB_KEY);
-  const headers: Record<string, string> = { Accept: "application/json" };
+  const token    = getStoredToken();
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
 
   if (cached?.etag) {
     headers["If-None-Match"] = `"${cached.etag}"`;
   }
 
-  const url = `${BASE}/api/raw-performance`;
-  const res = await fetch(url, { headers });
+  const url = new URL(`${BASE}/api/raw-performance`);
+  url.searchParams.set("channel_id", channelId);
+  const res = await fetch(url.toString(), { headers });
 
   // ── 304 Not Modified — data unchanged, use IndexedDB ───────────────────────
   if (res.status === 304 && cached) {
@@ -279,4 +326,79 @@ export async function fetchRawPerformance(): Promise<RawPerformanceResponse> {
   }
 
   return data;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Home (accounts + channels the signed-in user can access)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface HomeChannel {
+  id:       string;
+  name:     string;
+  logo_url: string;
+  platform: string; // "google_ads" | "meta_ads" | ... — drives icon + which dashboard route to open
+}
+
+export interface HomeAccount {
+  id:           string;
+  name:         string;
+  logo_url:     string;
+  team_name:    string;
+  cluster_name: string;
+  channels:     HomeChannel[];
+}
+
+export interface AccessGrant {
+  role:       string;
+  scope_type: string;
+  scope_name: string;
+}
+
+export interface UserAccessSummary {
+  is_super_admin: boolean;
+  grants:         AccessGrant[];
+}
+
+export const ROLE_LABELS: Record<string, string> = {
+  super_admin:  "Super Admin",
+  cluster_head: "Cluster Head",
+  team_head:    "Team Head",
+  account_head: "Account Head",
+};
+
+/** One-line human summary of a user's access, for display in the profile. */
+export function summarizeAccess(access: UserAccessSummary | null): string | null {
+  if (!access) return null;
+  if (access.is_super_admin) return "Super Admin (Full Access)";
+  if (access.grants.length === 0) return null;
+  const [first, ...rest] = access.grants;
+  const label = `${ROLE_LABELS[first.role] ?? first.role} · ${first.scope_name}`;
+  return rest.length > 0 ? `${label} +${rest.length} more` : label;
+}
+
+export interface HomeResponse {
+  status:   "ok";
+  user:     UserAccessSummary;
+  accounts: HomeAccount[];
+}
+
+/**
+ * Fetch the accounts + channels the current user has access to.
+ * Requires auth — sends the stored JWT as a Bearer token.
+ */
+export async function fetchHomeData(): Promise<HomeResponse> {
+  const token = getStoredToken();
+  const res = await fetch(`${BASE}/api/home`, {
+    headers: {
+      "Accept": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail?.detail ?? `API error ${res.status}`);
+  }
+
+  return res.json() as Promise<HomeResponse>;
 }

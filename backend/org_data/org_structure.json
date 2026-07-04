@@ -1,0 +1,15 @@
+{
+  "clusters": [
+    { "id": "cluster_default", "name": "Default Cluster" }
+  ],
+  "teams": [
+    { "id": "team_default", "name": "Default Team", "cluster_id": "cluster_default" }
+  ],
+  "accounts": [
+    { "id": "acc_aukera", "name": "Aukera Jewellery", "logo_url": "", "team_id": "team_default" }
+  ],
+  "channels": [
+    { "id": "ch_aukera_google_ads", "name": "Google Ads", "logo_url": "", "account_id": "acc_aukera", "platform": "google_ads" },
+    { "id": "ch_aukera_meta_ads", "name": "Meta Ads", "logo_url": "", "account_id": "acc_aukera", "platform": "meta_ads" }
+  ]
+}

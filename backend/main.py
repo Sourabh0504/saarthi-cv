@@ -8,12 +8,24 @@ Run with:
   OR (from inside the backend/ folder):
     uvicorn main:app --reload --port 8000
 
+Multi-channel: every data route takes a required `channel_id` query param and
+resolves it against org_data (org_structure.json / org_secrets.json / access_grants.json)
+via org_access — the signed-in user must have a grant covering that channel or the
+route returns 403. Fetching is lazy: nothing is pre-warmed on startup or on a timer;
+the first request for a channel is what triggers its Apps Script call, and the
+result is cached (namespaced by channel_id) for subsequent requests. This is what
+lets a handful of servers serve hundreds of accounts/channels without needing to
+eagerly refresh all of them on a schedule.
+
 Routes:
-  GET  /health                                          → liveness check
-  GET  /api/dimensions                                  → all creative metadata
-  GET  /api/performance?start=&end=                     → enriched creatives for date range
-  GET  /api/top-performers?start=&end=&metric=&type=&city=&n=  → top N by metric
-  POST /api/sync                                        → force-clear cache
+  GET  /health                                                        → liveness check
+  GET  /api/dimensions?channel_id=                                    → all creative metadata
+  GET  /api/performance?channel_id=&start=&end=                       → enriched creatives for date range
+  GET  /api/top-performers?channel_id=&start=&end=&metric=&type=&city=&n=  → top N by metric
+  GET  /api/raw-performance?channel_id=                               → all daily rows (ETag/304)
+  GET  /api/current-structure?channel_id=                             → current campaign structure
+  POST /api/sync?channel_id=                                          → force-clear one channel's cache
+  GET  /api/home                                                      → accounts/channels the user can see
 """
 
 from __future__ import annotations
@@ -21,6 +33,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 import asyncio
 
+import httpx
 from fastapi import FastAPI, HTTPException, Query, Header, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -29,62 +42,52 @@ from pydantic import BaseModel
 import cache as cache_module
 import db as db_module
 from apps_script_connector import (
-    fetch_data, fetch_raw_data, fetch_current_structure, close_http_client
+    fetch_data, fetch_raw_data, fetch_current_structure, close_http_client,
+    raw_daily_cache_key,
 )
-from calculator import top_performers
-from config import origins, get_apps_script_url
+from calculator import top_performers as _top_performers_google
+from calculator_meta import top_performers as _top_performers_meta
+from config import origins
 from auth import (
     verify_google_access_token, check_whitelist,
     create_session_token, require_user,
 )
+from org_access import (
+    build_home_payload, get_channel_secrets, get_channel_platform, user_can_access_channel,
+)
 
 
-# ── Lifespan: init DB, pre-warm cache, periodic refresh, clean shutdown ──────
+def require_channel_access(
+    channel_id: str = Query(..., description="Channel id, e.g. ch_aukera_google_ads"),
+    user: dict = Depends(require_user),
+) -> str:
+    """
+    Shared dependency for every data route: hard-requires a valid session AND
+    that the signed-in user's grants (from org_access) actually cover this
+    channel_id. Returns the channel_id so routes can use it directly.
+    """
+    if not user_can_access_channel(user.get("email", ""), channel_id):
+        raise HTTPException(status_code=403, detail="You do not have access to this channel.")
+    return channel_id
+
+
+# ── Lifespan: init DB, periodic purge, clean shutdown ────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Startup:
       1. Initialize SQLite schema (idempotent — safe on every restart).
-      2. Pre-fetch raw daily data in the background (warm the two-tier cache).
-         If SQLite already has valid data, this returns instantly from disk.
-         If SQLite is cold (first ever run), this calls Apps Script (~30–90s)
-         in the background — the server is already accepting requests.
-      3. Launch a background loop that re-warms the cache every 18 minutes.
-      4. Launch a background loop that purges expired SQLite rows every 30 minutes.
+      2. Launch a background loop that purges expired SQLite rows every 30 minutes.
+         (No cache pre-warming here — with potentially hundreds of channels,
+         warming all of them on a timer doesn't scale. Each channel's data is
+         fetched lazily on its first request and cached from then on.)
 
     Shutdown:
-      5. Close the shared httpx.AsyncClient gracefully.
+      3. Close the shared httpx.AsyncClient gracefully.
     """
     # ── Startup ────────────────────────────────────────────────────────────────
-    # 1. Init SQLite (creates cv_cache.db + table if they don't exist)
     db_module.init_db()
     print("[startup] SQLite persistent cache initialized")
-
-    async def _warm_cache() -> None:
-        """Warm both data endpoints in parallel. Non-fatal."""
-        try:
-            await asyncio.gather(
-                fetch_data(),
-                fetch_raw_data(),
-                return_exceptions=True,
-            )
-            print("[startup] Cache pre-warmed: auto range + raw daily (parallel)")
-        except Exception as exc:
-            print(f"[startup] Pre-warm failed (non-fatal): {exc}")
-
-    async def _periodic_warm() -> None:
-        """Re-warm the auto range + raw daily every 18 min (before AS 20-min TTL)."""
-        INTERVAL = 18 * 60
-        while True:
-            await asyncio.sleep(INTERVAL)
-            try:
-                cache_module.invalidate_key("auto_all")
-                cache_module.invalidate_key("raw_daily")
-                await fetch_data()
-                await fetch_raw_data()
-                print("[periodic] Cache re-warmed: auto range + raw daily")
-            except Exception as exc:
-                print(f"[periodic] Re-warm failed (non-fatal): {exc}")
 
     async def _periodic_purge() -> None:
         """Delete expired SQLite rows every 30 minutes to keep the DB small."""
@@ -98,8 +101,6 @@ async def lifespan(app: FastAPI):
             except Exception as exc:
                 print(f"[purge] SQLite purge failed (non-fatal): {exc}")
 
-    asyncio.create_task(_warm_cache())
-    asyncio.create_task(_periodic_warm())
     asyncio.create_task(_periodic_purge())
 
     yield  # ← Server is running here
@@ -146,14 +147,14 @@ async def health():
 
 
 @app.get("/api/dimensions", tags=["Data"])
-async def get_dimensions():
+async def get_dimensions(channel_id: str = Depends(require_channel_access)):
     """
     Return all creative metadata from the creative_dimensions Sheet tab.
     Uses last-30-day default range (performance zeros are fine — we just need dimensions).
     Result is cached.
     """
     try:
-        data = await fetch_data()
+        data = await fetch_data(channel_id)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Apps Script fetch failed: {exc}")
 
@@ -175,6 +176,7 @@ async def get_dimensions():
 
 @app.get("/api/performance", tags=["Data"])
 async def get_performance(
+    channel_id: str = Depends(require_channel_access),
     start: str | None = Query(None, description="Start date (YYYY-MM-DD)", example="2026-05-01"),
     end:   str | None = Query(None, description="End date (YYYY-MM-DD)",   example="2026-05-28"),
     status: str | None = Query(None, description="Status filter: Enabled | Paused | All", example="Enabled"),
@@ -196,7 +198,7 @@ async def get_performance(
         _validate_dates(start, end)
 
     try:
-        data = await fetch_data(start, end, status_norm)
+        data = await fetch_data(channel_id, start, end, status_norm)
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     except Exception as exc:
@@ -216,6 +218,7 @@ async def get_performance(
 
 @app.get("/api/top-performers", tags=["Data"])
 async def get_top_performers(
+    channel_id: str = Depends(require_channel_access),
     start:  str       = Query(...,      description="Start date (YYYY-MM-DD)"),
     end:    str       = Query(...,      description="End date (YYYY-MM-DD)"),
     metric: str       = Query("ctr",   description="Metric to rank by: ctr | conversions | cpc | cpa | impressions | clicks | cost"),
@@ -226,10 +229,13 @@ async def get_top_performers(
     """
     Return the top N creatives for a given metric and optional type/city filters.
 
-    For cost-efficiency metrics (cpc, cpa): lower = better → sorted ascending.
-    For all others (ctr, conversions, impressions): higher = better → sorted descending.
+    Ranking logic (which metrics are "lower is better") depends on the
+    channel's platform: Google uses cpc/cpa, Meta uses cpc/cpl.
     """
-    VALID_METRICS = {"ctr", "cpc", "cpm", "cr", "cpa", "impressions", "clicks", "cost", "conversions"}
+    VALID_METRICS = {
+        "ctr", "cpc", "cpm", "cr", "cpa", "cvr", "cpl",
+        "impressions", "clicks", "cost", "conversions",
+    }
     if metric not in VALID_METRICS:
         raise HTTPException(
             status_code=400,
@@ -239,11 +245,14 @@ async def get_top_performers(
     _validate_dates(start, end)
 
     try:
-        data = await fetch_data(start, end)
+        data = await fetch_data(channel_id, start, end)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Apps Script fetch failed: {exc}")
 
-    results = top_performers(
+    top_performers_fn = (
+        _top_performers_meta if get_channel_platform(channel_id) == "meta_ads" else _top_performers_google
+    )
+    results = top_performers_fn(
         creatives=data["creatives"],
         metric=metric,
         creative_type=type,
@@ -264,10 +273,11 @@ async def get_top_performers(
 @app.get("/api/raw-performance", tags=["Data"])
 async def get_raw_performance(
     response: Response,
+    channel_id: str = Depends(require_channel_access),
     if_none_match: str | None = Header(None, alias="if-none-match"),
 ):
     """
-    Return ALL daily rows for ALL dates in the sheet.
+    Return ALL daily rows for ALL dates in the sheet, for one channel.
 
     Unlike /api/performance (which aggregates server-side for a given date range),
     this endpoint returns raw per-creative-per-day data so the frontend can
@@ -287,19 +297,20 @@ async def get_raw_performance(
     # ── ETag check: return 304 if client already has current data ─────────────
     # The ETag is the SHA-256 checksum stored in SQLite when the data was cached.
     # Reading it is a single lightweight SELECT — no re-computation.
-    current_etag = cache_module.get_etag("raw_daily")
+    cache_key = raw_daily_cache_key(channel_id)
+    current_etag = cache_module.get_etag(cache_key)
     if current_etag and if_none_match and if_none_match.strip('"') == current_etag:
         return Response(status_code=304)
 
     try:
-        data = await fetch_raw_data()
+        data = await fetch_raw_data(channel_id)
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Apps Script fetch failed: {exc}")
 
     # Attach ETag to response so client can cache it
-    new_etag = cache_module.get_etag("raw_daily")
+    new_etag = cache_module.get_etag(cache_key)
     if new_etag:
         response.headers["ETag"]          = f'"{new_etag}"'
         response.headers["Cache-Control"] = "private, no-cache"
@@ -318,7 +329,7 @@ async def get_raw_performance(
 
 
 @app.get("/api/current-structure", tags=["Data"])
-async def get_current_structure():
+async def get_current_structure(channel_id: str = Depends(require_channel_access)):
     """
     Return the current live campaign structure from Current_Pmax + Current_Dgen Sheet tabs.
 
@@ -327,7 +338,7 @@ async def get_current_structure():
     Result is cached (10 min TTL on the Apps Script side; 15 min on the Python side).
     """
     try:
-        data = await fetch_current_structure()
+        data = await fetch_current_structure(channel_id)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Apps Script fetch failed: {exc}")
 
@@ -340,30 +351,49 @@ async def get_current_structure():
     }
 
 
-@app.post("/api/sync", tags=["System"])
-async def sync():
+@app.get("/api/home", tags=["Org"])
+async def get_home(user: dict = Depends(require_user)):
     """
-    Force-clear the entire cache (Python TTLCache + Apps Script ScriptProperties)
-    and immediately pre-fetch the default date range.
-    Use this after manually updating the Google Sheet or after a new creative is added.
-    """
-    # 1. Clear Python in-memory cache
-    cache_module.invalidate_all()
+    Return the signed-in user's access summary + every account/channel they
+    can see (grouped by account, enriched with team/cluster names), for the
+    home/landing screen.
 
-    # 2. Clear Apps Script ScriptProperties persistent cache
+    Access is resolved from org_data/access_grants.json via org_access —
+    a user sees an account/channel if any of their grants (super_admin,
+    cluster_head, team_head, or account_head — they can hold several) covers it.
+    """
+    return build_home_payload(user.get("email", ""))
+
+
+@app.post("/api/sync", tags=["System"])
+async def sync(channel_id: str = Depends(require_channel_access)):
+    """
+    Force-clear one channel's cache (Python TTLCache + SQLite + Apps Script
+    ScriptProperties) and immediately pre-fetch its default date range.
+    Use this after manually updating that channel's Google Sheet.
+
+    Scoped to this channel only — does not touch any other account/channel's
+    cached data.
+    """
+    # 1. Clear this channel's Python cache (memory + SQLite), leave others untouched
+    cache_module.invalidate_prefix(f"{channel_id}:")
+
+    # 2. Clear this channel's Apps Script ScriptProperties persistent cache
     try:
-        async with __import__("httpx").AsyncClient(timeout=15.0) as client:
-            await client.get(
-                get_apps_script_url(),
-                params={"action": "invalidate"},
-                follow_redirects=True,
-            )
+        apps_script_url = get_channel_secrets(channel_id).get("apps_script_url")
+        if apps_script_url:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                await client.get(
+                    apps_script_url,
+                    params={"action": "invalidate"},
+                    follow_redirects=True,
+                )
     except Exception as exc:
         print(f"[sync] ScriptProperties invalidation failed (non-fatal): {exc}")
 
-    # 3. Pre-warm Python cache with fresh data from Apps Script
+    # 3. Pre-warm this channel's cache with fresh data from Apps Script
     try:
-        await fetch_data()
+        await fetch_data(channel_id)
     except Exception as exc:
         return {
             "status":  "partial",
@@ -372,7 +402,8 @@ async def sync():
 
     return {
         "status":  "ok",
-        "message": "All caches cleared (Python + Apps Script) and pre-warmed successfully.",
+        "message": "Channel cache cleared (Python + Apps Script) and pre-warmed successfully.",
+        "channel_id": channel_id,
         "pre_warmed_range": "auto range (sheet min/max)",
     }
 

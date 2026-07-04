@@ -232,6 +232,33 @@ def db_clear_all() -> None:
         raise
 
 
+def db_delete_prefix(prefix: str) -> int:
+    """
+    Atomically remove every cache entry whose key starts with `prefix`.
+    Returns the number of rows removed.
+
+    Escapes SQL LIKE wildcards (%, _) in the prefix — channel_id values
+    contain underscores (e.g. "ch_aukera_google_ads"), which would otherwise
+    match any single character and delete unrelated keys.
+    """
+    escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    conn = _get_conn()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        cur = conn.execute(
+            "DELETE FROM cache WHERE key LIKE ? ESCAPE '\\'",
+            (escaped + "%",),
+        )
+        conn.execute("COMMIT")
+        return cur.rowcount
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        return 0
+
+
 def db_purge_expired() -> int:
     """
     Delete all expired entries. Returns the number of rows removed.

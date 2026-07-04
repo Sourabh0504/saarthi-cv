@@ -11,18 +11,33 @@ export interface ComputedMetrics extends Aggregated {
   ctr: number; // %
   cpc: number; // ₹
   cpm: number; // ₹
-  cr: number;  // %
-  cpa: number; // ₹
+  cr: number;  // %  Google: conversion rate (conversions / clicks)
+  cpa: number; // ₹  Google: cost per acquisition (cost / conversions)
+  // Meta Ads aliases — same formulas as cr/cpa, kept as separate keys because
+  // Meta's own UI/copy calls them CVR/CPL. Both pairs are always populated so
+  // either dashboard can read whichever key it expects off the same object.
+  cvr: number; // %  Meta: conversion rate (leads / clicks)
+  cpl: number; // ₹  Meta: cost per lead (cost / leads)
+  // Extra Meta-only metrics — attached during aggregation, not derived here.
+  // Always optional so the Google dashboard's usage of ComputedMetrics is unaffected.
+  landing_page_views?:   number; // count
+  thruplays?:            number; // count
+  hook_rate?:            number; // percentage as-is from source (e.g. 25.0 = 25%)
+  video_avg_watch_time?: number; // seconds
 }
 
 export function computeMetrics(a: Aggregated): ComputedMetrics {
+  const rate = +(safeDiv(a.conversions, a.clicks) * 100).toFixed(2);
+  const cost = +safeDiv(a.cost, a.conversions).toFixed(2);
   return {
     ...a,
     ctr: +(safeDiv(a.clicks, a.impressions) * 100).toFixed(2),
     cpc: +safeDiv(a.cost, a.clicks).toFixed(2),
     cpm: +(safeDiv(a.cost, a.impressions) * 1000).toFixed(2),
-    cr:  +(safeDiv(a.conversions, a.clicks) * 100).toFixed(2),
-    cpa: +safeDiv(a.cost, a.conversions).toFixed(2),
+    cr:  rate,
+    cpa: cost,
+    cvr: rate,
+    cpl: cost,
   };
 }
 
@@ -62,4 +77,22 @@ export function getYouTubeId(url: string): string | null {
     if (m) return m[1];
   }
   return null;
+}
+
+/**
+ * Returns a Meta/Facebook creative image URL unchanged.
+ *
+ * DO NOT rewrite Facebook CDN URLs to "upgrade" resolution.
+ * scontent.xx.fbcdn.net URLs are cryptographically SIGNED — the size path
+ * segment (e.g. /s320x320/), the filename suffix (_s/_n/_b), and the query
+ * params (stp=, _nc_ohc=, oh=, oe=) are all bound to a signature. Editing any
+ * of them invalidates the signature and the CDN responds with 403 Forbidden.
+ *
+ * Kept as a pass-through so Meta-specific components can call it uniformly
+ * even though today it does nothing — the only safe way to get a higher-res
+ * image is to request a larger field at the data layer, never by mutating
+ * the URL client-side.
+ */
+export function upgradeMetaImageUrl(url: string | null | undefined): string {
+  return url ?? "";
 }

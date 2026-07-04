@@ -18,15 +18,19 @@ What changed vs. the original:
   4. row_count passed to cache.set_cached()
        — Stored in SQLite for integrity auditing at the DB layer.
 
-Data source: Apps Script reads Daily_dump exclusively.
-  creative_id = Asset URL + "|" + Location + "|" + Campaign_Type + "|" + Campaign + "|" + Ad_group + "|" + Funnel
+Multi-channel: every fetch function takes a channel_id and resolves its own
+Apps Script URL via org_access.get_channel_secrets() (org_data/org_secrets.json)
+instead of one hardcoded global URL. Cache keys are prefixed with "{channel_id}:"
+so hundreds of accounts/channels can share this same cache table and lock
+registry without colliding. Fetching is lazy — first request for a channel
+triggers the Apps Script call; there is no eager pre-warm-everything on startup.
 
-Flow (with new cache tiers):
+Flow (with cache tiers):
   1. Memory cache HIT  → return (<1ms)
   2. SQLite cache HIT  → backfill memory → return (~2ms)
   3. Acquire per-key asyncio.Lock (no thundering herd)
   4. Re-check cache inside lock (double-check locking)
-  5. If still MISS → call Apps Script (800ms–90s depending on cold-start)
+  5. If still MISS → call this channel's Apps Script URL (800ms–90s cold-start)
   6. Validate integrity → raise ValueError if invalid
   7. Merge dimensions + performance → enrich metrics
   8. Write to SQLite + memory (atomic SQLite write)
@@ -42,8 +46,9 @@ from typing import Optional
 import httpx
 
 import cache as cache_module
-from calculator import enrich_all
-from config import get_apps_script_url
+from calculator import enrich_all as _enrich_google
+from calculator_meta import enrich_all as _enrich_meta
+from org_access import get_channel_secrets, get_channel_platform
 
 # ── HTTP timeout ──────────────────────────────────────────────────────────────
 _TIMEOUT = httpx.Timeout(connect=15.0, read=120.0, write=30.0, pool=15.0)
@@ -105,17 +110,46 @@ def _to_float(value) -> float:
         return 0.0
 
 
+def _apps_script_url_for(channel_id: str) -> str:
+    """Look up a channel's Apps Script Web App URL from org_secrets.json."""
+    url = get_channel_secrets(channel_id).get("apps_script_url")
+    if not url:
+        raise ValueError(f"No Apps Script URL configured for channel '{channel_id}'.")
+    return url
+
+
+def raw_daily_cache_key(channel_id: str) -> str:
+    """Cache key for a channel's raw-daily dataset — shared with main.py's ETag lookup."""
+    return f"{channel_id}:raw_daily"
+
+
+# Fields beyond the core 4 (impressions/clicks/cost/conversions) that some
+# platforms' Apps Script already aggregates server-side (e.g. Meta's
+# hook_rate/thruplays) — carried through untouched if the platform's response
+# includes them, ignored otherwise.
+_OPTIONAL_PERF_FIELDS = ("landing_page_views", "thruplays", "hook_rate", "video_avg_watch_time")
+
+
+def _enrich_for(channel_id: str, merged: list[dict]) -> list[dict]:
+    """Dispatch to the right calculator module based on the channel's platform."""
+    platform = get_channel_platform(channel_id)
+    if platform == "meta_ads":
+        return _enrich_meta(merged)
+    return _enrich_google(merged)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # fetch_data — Aggregated performance for a date range
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def fetch_data(
+    channel_id: str,
     start: str | None = None,
     end:   str | None = None,
     status: str | None = None,
 ) -> dict:
     """
-    Fetch and return enriched creative data for the given date range.
+    Fetch and return enriched creative data for the given channel + date range.
 
     Returns a dict with shape:
     {
@@ -129,7 +163,7 @@ async def fetch_data(
     """
     use_auto   = not start or not end
     status_key = (status or "").strip().lower() or "all"
-    cache_key  = ("auto" if use_auto else f"{start}_{end}") + f"_{status_key}"
+    cache_key  = f"{channel_id}:" + ("auto" if use_auto else f"{start}_{end}") + f"_{status_key}"
 
     # ── Tier 1+2: Cache HIT (no lock needed — fast path) ─────────────────────
     cached = cache_module.get_cached(cache_key)
@@ -151,7 +185,7 @@ async def fetch_data(
             params = params or {}
             params["status"] = status
 
-        resp = await client.get(get_apps_script_url(), params=params)
+        resp = await client.get(_apps_script_url_for(channel_id), params=params)
         resp.raise_for_status()
         raw: dict = resp.json()
 
@@ -169,16 +203,22 @@ async def fetch_data(
     for dim in raw.get("dimensions", []):
         cid  = dim.get("creative_id")
         perf = perf_lookup.get(cid, {})
-        merged.append({
+        row = {
             **dim,
             "impressions": _to_float(perf.get("impressions", 0)),
             "clicks":      _to_float(perf.get("clicks", 0)),
             "cost":        _to_float(perf.get("cost", 0)),
             "conversions": _to_float(perf.get("conversions", 0)),
-        })
+        }
+        # Carry through platform-specific extras (e.g. Meta's hook_rate) if present.
+        for field in _OPTIONAL_PERF_FIELDS:
+            if field in perf:
+                row[field] = perf[field]
+        merged.append(row)
 
-    # Compute CTR, CPC, CPM, CR, CPA for every creative
-    enriched = enrich_all(merged)
+    # Compute metrics with the calculator matching this channel's platform
+    # (Google: ctr/cpc/cpm/cr/cpa — Meta: ctr/cpc/cpm/cvr/cpl)
+    enriched = _enrich_for(channel_id, merged)
     # Drop creatives with 0 impressions — useless for analysis
     enriched = [c for c in enriched if c.get("impressions", 0) > 0]
 
@@ -200,9 +240,9 @@ async def fetch_data(
 # fetch_raw_data — All daily rows for client-side aggregation
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def fetch_raw_data() -> dict:
+async def fetch_raw_data(channel_id: str) -> dict:
     """
-    Fetch ALL daily rows (one row per creative per day) for ALL dates.
+    Fetch ALL daily rows (one row per creative per day) for ALL dates, for one channel.
 
     The frontend uses this to aggregate any date range client-side, making
     date range changes instant — no round-trip to Apps Script or backend.
@@ -219,7 +259,7 @@ async def fetch_raw_data() -> dict:
       "daily_rows_count":    int,
     }
     """
-    cache_key = "raw_daily"
+    cache_key = raw_daily_cache_key(channel_id)
 
     # ── Cache HIT ─────────────────────────────────────────────────────────────
     cached = cache_module.get_cached(cache_key)
@@ -233,7 +273,7 @@ async def fetch_raw_data() -> dict:
             return {**cached, "served_from_cache": True}
 
         client = await _get_client()
-        resp   = await client.get(get_apps_script_url(), params={"tab": "raw_daily"})
+        resp   = await client.get(_apps_script_url_for(channel_id), params={"tab": "raw_daily"})
         resp.raise_for_status()
         raw: dict = resp.json()
 
@@ -260,7 +300,7 @@ async def fetch_raw_data() -> dict:
 # fetch_current_structure — Current campaign structure (no performance)
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def fetch_current_structure() -> dict:
+async def fetch_current_structure(channel_id: str) -> dict:
     """
     Fetch the current live campaign structure from Current_Pmax + Current_Dgen Sheet tabs.
     No performance data — purely structural.
@@ -273,7 +313,7 @@ async def fetch_current_structure() -> dict:
       "count":             int,
     }
     """
-    cache_key = "current_structure"
+    cache_key = f"{channel_id}:current_structure"
 
     # ── Cache HIT ─────────────────────────────────────────────────────────────
     cached = cache_module.get_cached(cache_key)
@@ -288,7 +328,7 @@ async def fetch_current_structure() -> dict:
 
         client = await _get_client()
         resp   = await client.get(
-            get_apps_script_url(),
+            _apps_script_url_for(channel_id),
             params={"tab": "current_structure"},
         )
         resp.raise_for_status()
