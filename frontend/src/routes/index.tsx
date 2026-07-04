@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import {
-  Gem, Sparkles, Moon, Sun, LayoutGrid, Trophy,
+  Gem, Sparkles, Moon, Sun, LayoutGrid, Trophy, BarChart3,
   IndianRupee, MousePointerClick, Eye, Coins, PanelLeftClose,
   PanelLeftOpen, RefreshCw, AlertTriangle,
   Loader2, FileDown, Percent, Palette, SlidersHorizontal, ChevronDown,
@@ -26,6 +26,7 @@ import { GroupingSidebar, type SidebarMode } from "@/components/GroupingSidebar"
 import { type Dim, DEFAULT_HIERARCHY, DIM_META } from "@/lib/hierarchy";
 import { DirectoryTree } from "@/components/DirectoryTree";
 import { TopPerformers } from "@/components/TopPerformers";
+import { CampaignPerformance } from "@/components/CampaignPerformance";
 import { FilterPanel, type Filters } from "@/components/FilterPanel";
 import { ExportModal, type ExportPick } from "@/components/ExportModal";
 import { SavedViewsMenu } from "@/components/SavedViewsMenu";
@@ -275,7 +276,7 @@ function Portal() {
   const [activeKey, setActiveKey]       = useState<string>("ALL");
   const [directoryLevel, setDirectoryLevel] = useState<number>(1);
   const [pdfLoading, setPdfLoading]     = useState(false);
-  const [activeTab, setActiveTab]       = useState<"directory" | "top">("directory");
+  const [activeTab, setActiveTab]       = useState<"directory" | "top" | "campaigns">("directory");
   const topPdfRef = useRef<(() => Promise<void>) | null>(null);
   const [topPdfLoading, setTopPdfLoading] = useState(false);
   const handleTopPdf = useCallback(async () => {
@@ -1045,8 +1046,9 @@ function Portal() {
                 {/* Tab pills */}
                 <div className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                   {([
-                    { id: "directory", icon: LayoutGrid, label: "Creative Directory" },
-                    { id: "top",       icon: Trophy,     label: "Top Performers"    },
+                    { id: "directory", icon: LayoutGrid,  label: "Creative Directory"   },
+                    { id: "campaigns", icon: BarChart3,   label: "Campaign Performance" },
+                    { id: "top",       icon: Trophy,      label: "Top Performers"       },
                   ] as const).map(({ id, icon: Icon, label }) => {
                     const active = activeTab === id;
                     return (
@@ -1228,6 +1230,11 @@ function Portal() {
                     />
                   )}
                 </div>
+              )}
+
+              {/* ── Campaign Performance tab ── */}
+              {activeTab === "campaigns" && (
+                <CampaignPerformance creatives={filteredCreatives} />
               )}
 
               {/* ── Top Performers tab ── */}

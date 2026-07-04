@@ -2,6 +2,27 @@
 
 All notable changes to the **CreativeVisibility** project will be documented in this file
 
+## Rules and Regulations
+1. **Document Everything**: All changes must be documented under the current session's `[Unreleased]` heading.
+2. **Architecture Sync**: If any change is made to the architecture or tech stack, `architecture.md` MUST be updated instantly to reflect those changes.
+3. **Format**: Use `### Added`, `### Changed`, `### Fixed`, `### Removed` to categorize changes.
+4. **Links**: Include markdown links to the specific files modified (e.g., `[path/to/file](file:///path/to/file)`).
+5. **Preserve History**: Do not alter or delete historical session logs.
+
+
+## [Unreleased] - 2026-07-04 (Session 9)
+
+### Added
+- Cloned the primary repository into `d:\Saarthi-CV`.
+- Added Rules and Regulations to the top of [changes.md](file:///d:/Saarthi-CV/changes.md).
+- Created [architecture.md](file:///d:/Saarthi-CV/architecture.md) detailing the working architecture and technology stack.
+- Added **Campaign Performance** tab (UI scaffolded) — [CampaignPerformance.tsx](file:///d:/Saarthi-CV/frontend/src/components/CampaignPerformance.tsx). NOTE: currently aggregates creative data as placeholder; will be replaced with Pipeline B data.
+- Wrote **Apps Script** for the separate CampaignPerf Google Spreadsheet — [campaignPerformanceDoGet.js](file:///d:/Saarthi-CV/backend/apps_script/campaignPerformanceDoGet.js). Serves raw daily ad-group rows, two-layer cache, `setupSheet()` + `healthCheck()` helpers.
+- Created **[PROJECT_SPEC.md](file:///d:/Saarthi-CV/PROJECT_SPEC.md)** — comprehensive product spec documenting both data pipelines, Google Sheet schemas, API design, file map, coding conventions, and open TODOs. Required reading for all agents working on this project.
+- Added **Campaign Performance** tab to the dashboard: new [CampaignPerformance.tsx](file:///d:/Saarthi-CV/frontend/src/components/CampaignPerformance.tsx) component that aggregates `filteredCreatives[]` client-side into a Campaign → Ad Group drilldown performance table. Includes: sortable columns (Impressions, Clicks, Spend, CTR, CPC, CPM, Conv., CPA), grand total row, spend % share per campaign, expand/collapse all, zero extra API calls.
+- Cloned the helper repository `ContentMaster-LB1` into `references/ContentMaster/`.
+- Configured a `.agents` directory junction to register user-added agent skills (`analytics`, `brainstorming`, `frontend-design`, `marketing-plan`, `marketing-psychology`, `skill-creator`).
+
 ## [Unreleased] - 2026-06-08 (Session 8)
 
 ### Changed
