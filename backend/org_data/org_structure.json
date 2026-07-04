@@ -1,15 +1,55 @@
 {
   "clusters": [
-    { "id": "cluster_default", "name": "Default Cluster" }
+    {
+      "id": "Sok-01",
+      "name": "Meluha-Nirvana_Sirius"
+    }
   ],
   "teams": [
-    { "id": "team_default", "name": "Default Team", "cluster_id": "cluster_default" }
+    {
+      "id": "meluha",
+      "name": "Meluha",
+      "cluster_id": "Sok-01"
+    },
+    {
+      "id": "nirvana",
+      "name": "Nirvana",
+      "cluster_id": "Sok-01"
+    },
+    {
+      "id": "sirius",
+      "name": "Sirius",
+      "cluster_id": "Sok-01"
+    }
   ],
   "accounts": [
-    { "id": "acc_aukera", "name": "Aukera Jewellery", "logo_url": "", "team_id": "team_default" }
+    {
+      "id": "acc_aukera",
+      "name": "Aukera Jewellery",
+      "logo_url": "",
+      "team_id": "meluha"
+    },
+    {
+      "id": "acc_croma",
+      "name": "Croma",
+      "logo_url": "",
+      "team_id": "nirvana"
+    }
   ],
   "channels": [
-    { "id": "ch_aukera_google_ads", "name": "Google Ads", "logo_url": "", "account_id": "acc_aukera", "platform": "google_ads" },
-    { "id": "ch_aukera_meta_ads", "name": "Meta Ads", "logo_url": "", "account_id": "acc_aukera", "platform": "meta_ads" }
+    {
+      "id": "ch_aukera_google_ads",
+      "name": "Google Ads",
+      "logo_url": "",
+      "account_id": "acc_aukera",
+      "platform": "google_ads"
+    },
+    {
+      "id": "ch_aukera_meta_ads",
+      "name": "Meta Ads",
+      "logo_url": "",
+      "account_id": "acc_aukera",
+      "platform": "meta_ads"
+    }
   ]
 }

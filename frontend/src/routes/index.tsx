@@ -284,15 +284,20 @@ function Home() {
 function AccountCard({ account }: { account: HomeAccount }) {
   return (
     <div className="rounded-2xl border border-border bg-card/60 backdrop-blur-2xl shadow-card p-5 transition-all hover:border-gold/40 hover:shadow-gold">
-      <div className="flex items-center gap-3">
+      <Link
+        to="/account"
+        search={{ account_id: account.id }}
+        className="flex items-center gap-3 group"
+        title={`Open ${account.name} overview`}
+      >
         <AccountLogo account={account} />
         <div className="min-w-0">
-          <div className="font-semibold text-foreground truncate">{account.name}</div>
+          <div className="font-semibold text-foreground truncate group-hover:text-gold transition-colors">{account.name}</div>
           <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
             {account.channels.length} channel{account.channels.length === 1 ? "" : "s"}
           </div>
         </div>
-      </div>
+      </Link>
 
       <div className="mt-4 flex flex-col gap-2">
         {account.channels.map((channel) => (

@@ -117,6 +117,22 @@ def get_channel_secrets(channel_id: str) -> dict:
     return secrets.get(channel_id, {})
 
 
+def get_shared_secret(key: str) -> str:
+    """
+    An agency-wide (not per-channel) secret from org_data/shared_secrets.json —
+    e.g. "targets_apps_script_url", "change_history_apps_script_url". These
+    don't fit org_secrets.json's per-channel_id shape since Targets and Change
+    History are account/agency-wide services, not tied to one ad platform.
+    Returns "" if not configured yet (the feature degrades gracefully rather
+    than erroring — see targets.py / change_history.py).
+    """
+    try:
+        secrets = _load_json("shared_secrets.json")
+    except FileNotFoundError:
+        return ""
+    return secrets.get(key, "") or ""
+
+
 def get_channel_platform(channel_id: str) -> str:
     """
     Which ad platform a channel is ("google_ads" | "meta_ads" | ...), from
@@ -143,6 +159,19 @@ def get_accessible_accounts(email: str) -> list[dict]:
     account_ids = {c["account_id"] for c in channels}
     structure = load_structure()
     return [a for a in structure["accounts"] if a["id"] in account_ids]
+
+
+def get_channels_for_account(account_id: str) -> list[dict]:
+    """Every channel dict under a given account_id, regardless of who's asking — used by the
+    account-summary aggregator, which is called only after user_can_access_account() has passed."""
+    structure = load_structure()
+    return [c for c in structure["channels"] if c["account_id"] == account_id]
+
+
+def user_can_access_account(email: str, account_id: str) -> bool:
+    """True if this email's grants cover at least one channel under this account_id."""
+    accessible_ids = {a["id"] for a in get_accessible_accounts(email)}
+    return account_id in accessible_ids
 
 
 def _scope_name(structure: dict, scope_type: str, scope_id: str) -> str:

@@ -26,12 +26,15 @@ Routes:
   GET  /api/current-structure?channel_id=                             → current campaign structure
   POST /api/sync?channel_id=                                          → force-clear one channel's cache
   GET  /api/home                                                      → accounts/channels the user can see
+  GET  /api/account-summary?account_id=&start=&end=                   → combined KPIs across an account's channels
 """
 
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import asyncio
+import datetime as _dt
+import re
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Header, Response, Depends
@@ -54,7 +57,11 @@ from auth import (
 )
 from org_access import (
     build_home_payload, get_channel_secrets, get_channel_platform, user_can_access_channel,
+    user_can_access_account, load_structure,
 )
+from account_aggregator import fetch_account_summary
+from targets import fetch_account_target
+from change_history import get_recent_changes, log_change, ChangeHistoryNotConfigured
 
 
 def require_channel_access(
@@ -69,6 +76,20 @@ def require_channel_access(
     if not user_can_access_channel(user.get("email", ""), channel_id):
         raise HTTPException(status_code=403, detail="You do not have access to this channel.")
     return channel_id
+
+
+def require_account_access(
+    account_id: str = Query(..., description="Account id, e.g. acc_aukera"),
+    user: dict = Depends(require_user),
+) -> str:
+    """
+    Same shape as require_channel_access, but for the account-level summary
+    route — the user must have a grant covering at least one channel under
+    this account.
+    """
+    if not user_can_access_account(user.get("email", ""), account_id):
+        raise HTTPException(status_code=403, detail="You do not have access to this account.")
+    return account_id
 
 
 # ── Lifespan: init DB, periodic purge, clean shutdown ────────────────────────
@@ -365,6 +386,116 @@ async def get_home(user: dict = Depends(require_user)):
     return build_home_payload(user.get("email", ""))
 
 
+@app.get("/api/account-summary", tags=["Org"])
+async def get_account_summary(
+    account_id: str = Depends(require_account_access),
+    start: str | None = Query(None, description="Start date (YYYY-MM-DD). Defaults to the 1st of the current month."),
+    end:   str | None = Query(None, description="End date (YYYY-MM-DD). Defaults to today."),
+):
+    """
+    Aggregated performance across every channel under one account — powers
+    the Account Overview screen's KPI cards.
+
+    Unlike the per-channel routes, start/end always resolve to a concrete
+    range (default: current calendar month to date) rather than "auto" —
+    channels under one account can have very different underlying data
+    ranges, so there's no single sensible "auto" that stays comparable
+    across all of them. See account_aggregator.py for the aggregation logic.
+    """
+    if (start and not end) or (end and not start):
+        raise HTTPException(status_code=400, detail="Provide both start and end, or omit both to default to the current month.")
+    if start and end:
+        _validate_dates(start, end)
+    else:
+        today = _dt.date.today()
+        start = today.replace(day=1).isoformat()
+        end = today.isoformat()
+
+    return await fetch_account_summary(account_id, start, end)
+
+
+@app.get("/api/account-targets", tags=["Org"])
+async def get_account_targets(
+    account_id: str = Depends(require_account_access),
+    month: str = Query(..., description="YYYY-MM, e.g. 2026-07"),
+):
+    """
+    This account's target for the given month, from the Targets Google Sheet.
+    Returns found=False (not an error) if Targets isn't configured yet or no
+    row exists for this account/month — the frontend shows an empty state
+    rather than an error banner, since a missing target is an expected,
+    not exceptional, condition until every account has one set.
+    """
+    if not re.match(r"^\d{4}-\d{2}$", month):
+        raise HTTPException(status_code=400, detail="month must be in YYYY-MM format.")
+    return await fetch_account_target(account_id, month)
+
+
+@app.get("/api/changes", tags=["Org"])
+async def get_changes(
+    account_id: str = Depends(require_account_access),
+    limit: int = Query(20, ge=1, le=200),
+):
+    """Most recent documented changes for this account, from the Change History sheet."""
+    return await get_recent_changes(account_id, limit)
+
+
+class ChangeLogEntry(BaseModel):
+    account_id:      str
+    change_category: str
+    change_type:     str
+    previous_value:  str | None = None
+    new_value:       str | None = None
+    reason:          str
+    expected_impact: str | None = None
+    notes:           str | None = None
+    priority:        str = "Medium"
+
+
+@app.post("/api/changes", tags=["Org"])
+async def post_change(entry: ChangeLogEntry, user: dict = Depends(require_user)):
+    """
+    Document a new change to an account. Append-only — there is no PUT/DELETE
+    for a change record, on purpose (see Changelogfeature.md §15.2).
+
+    account_id lives in the request body (not a query param) since this is a
+    POST, so access is checked explicitly here rather than via the
+    require_account_access dependency shortcut used by the GET routes above.
+
+    performed_by is always the authenticated session's email — never taken
+    from the request body — since a client-supplied "who did this" would
+    make the audit trail's authorship untrustworthy.
+    """
+    if not user_can_access_account(user.get("email", ""), entry.account_id):
+        raise HTTPException(status_code=403, detail="You do not have access to this account.")
+
+    account_names = {a["id"]: a["name"] for a in load_structure()["accounts"]}
+    account_name = account_names.get(entry.account_id, entry.account_id)
+
+    payload = {
+        "account_id":      entry.account_id,
+        "account_name":    account_name,
+        "change_category": entry.change_category,
+        "change_type":     entry.change_type,
+        "previous_value":  entry.previous_value or "",
+        "new_value":       entry.new_value or "",
+        "reason":          entry.reason,
+        "expected_impact": entry.expected_impact or "",
+        "performed_by":    user.get("email", ""),
+        "notes":           entry.notes or "",
+        "priority":        entry.priority,
+    }
+
+    try:
+        result = await log_change(payload)
+    except ChangeHistoryNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to save change: {exc}")
+
+    return result
+
+
 @app.post("/api/sync", tags=["System"])
 async def sync(channel_id: str = Depends(require_channel_access)):
     """
@@ -414,7 +545,6 @@ async def sync(channel_id: str = Depends(require_channel_access)):
 
 def _validate_dates(start: str, end: str) -> None:
     """Raise 400 if date strings are malformed or start > end."""
-    import re
     pattern = r"^\d{4}-\d{2}-\d{2}$"
     if not re.match(pattern, start) or not re.match(pattern, end):
         raise HTTPException(status_code=400, detail="Dates must be in YYYY-MM-DD format.")

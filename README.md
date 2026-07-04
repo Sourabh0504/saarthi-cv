@@ -11,29 +11,43 @@ This document provides step-by-step instructions to get both the Python FastAPI 
 
 ## 1. Environment Setup
 
-Before running the services, you must create `.env` files for both the frontend and backend.
+Before running the services, you must create `.env` files for both the frontend and backend, **and** configure the per-channel org data.
 
 ### Backend `.env`
 Create a `.env` file inside the `backend` folder:
 ```ini
 # backend/.env
-APPS_SCRIPT_URL=https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec
 CACHE_TTL=900
+ALLOWED_ORIGINS=http://localhost:8080,http://localhost:3000
+API_HOST=0.0.0.0
+API_PORT=8000
+GOOGLE_CLIENT_ID=YOUR_GOOGLE_OAUTH_CLIENT_ID
+ALLOWED_EMAILS=you@example.com
+JWT_SECRET=generate-with-python-secrets-token_hex-32
 ```
-*(Note: You will need to replace the URL with your actual deployed Apps Script Web App URL from the Google Sheet.)*
+**Note:** there is no `APPS_SCRIPT_URL` here anymore — Apps Script URLs are per-channel now, configured in `backend/org_data/org_secrets.json` (see step below), not in `.env`.
+
+### Backend `org_data` — accounts, channels, and who can see them
+This portal is multi-tenant: it can serve many accounts, each with multiple ad-platform channels (Google Ads, Meta Ads, ...). Three files under `backend/org_data/` control this, and are all read fresh on every request (no restart needed after editing):
+- **`org_structure.json`** (committed) — your Clusters → Teams → Accounts → Channels. Each channel needs a `platform` (`"google_ads"` or `"meta_ads"`).
+- **`org_secrets.json`** (**gitignored** — copy `org_secrets.example.json` to get the shape) — for each `channel_id`, its real deployed Apps Script Web App URL (and optionally `sheet_url`).
+- **`access_grants.json`** (committed) — maps each email to the role(s)/scope(s) they can see. A `super_admin` grant (`{"role": "super_admin", "scope_type": "global", "scope_id": "*"}`) is the fastest way to see everything while testing.
+
+You won't see any accounts on the Home page, or be able to load any dashboard, until at least one channel exists in `org_structure.json` with a matching entry in `org_secrets.json`, and your signed-in email has a grant covering it in `access_grants.json`.
 
 ### Frontend `.env.local`
 Create a `.env.local` file inside the `frontend` folder:
 ```ini
 # frontend/.env.local
 VITE_API_URL=http://localhost:8000
+VITE_GOOGLE_CLIENT_ID=YOUR_GOOGLE_OAUTH_CLIENT_ID
 ```
 
 ---
 
 ## 2. Running the Backend (FastAPI)
 
-Open a new terminal at the root of the project (`d:\CreativeVisibility`) and run the following commands:
+Open a new terminal at the root of the project (`D:\Saarthi-CV`) and run the following commands:
 
 **Step A: Create and activate a virtual environment**
 ```powershell
@@ -66,7 +80,7 @@ uvicorn main:app --reload
 
 ## 3. Running the Frontend (React / Vite)
 
-Open a **second** terminal window at the root of the project (`d:\CreativeVisibility`) and run:
+Open a **second** terminal window at the root of the project (`D:\Saarthi-CV`) and run:
 
 **Step A: Navigate and install dependencies**
 ```powershell
@@ -81,7 +95,7 @@ npm install
 ```powershell
 npm run dev
 ```
-*The frontend will now be running, typically at `http://localhost:5173`. Open this URL in your browser to view the portal.*
+*The frontend will now be running, typically at `http://localhost:8080`. Open this URL in your browser to view the portal.*
 
 ---
 

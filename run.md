@@ -1,6 +1,8 @@
 # How to Run the Project (Start to Finish)
 
-This document contains the exact commands to get both the backend and frontend running from scratch. You will need two separate terminal windows open at the root of the project (`d:\CreativeVisibility`).
+This document contains the exact commands to get both the backend and frontend running from scratch. You will need two separate terminal windows open at the root of the project (`D:\Saarthi-CV`).
+
+> **Before you start:** this is now a multi-tenant portal. Beyond the `.env` files, you also need at least one account/channel configured in `backend/org_data/` (`org_structure.json`, `org_secrets.json`, `access_grants.json`) — otherwise the Home page will show no accounts and there's nothing to load. See `README.md` §1 for details.
 
 ## Terminal 1: Start the Backend (Python FastAPI)
 
@@ -28,7 +30,7 @@ uvicorn main:app --reload
 
 ## Terminal 2: Start the Frontend (React / Vite)
 
-Open a **new** terminal window at the root of the project (`d:\CreativeVisibility`), and run these commands:
+Open a **new** terminal window at the root of the project (`D:\Saarthi-CV`), and run these commands:
 
 ```powershell
 # 1. Go into the frontend folder

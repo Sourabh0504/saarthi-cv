@@ -402,3 +402,121 @@ export async function fetchHomeData(): Promise<HomeResponse> {
 
   return res.json() as Promise<HomeResponse>;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Account Overview (combined KPIs, targets, change log — across an account's channels)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface AccountChannelBreakdown {
+  channel_id:         string;
+  channel_name:       string;
+  platform:           string;
+  impressions?:       number;
+  clicks?:            number;
+  cost?:              number;
+  conversions?:       number;
+  served_from_cache?: boolean;
+  error?:             string;
+}
+
+export interface AccountSummaryTotals {
+  impressions:         number;
+  clicks:              number;
+  cost:                number;
+  conversions:         number;
+  ctr:                 number;
+  cpc:                 number;
+  cpm:                 number;
+  cost_per_conversion: number;
+}
+
+export interface AccountSummaryResponse {
+  status:     "ok";
+  partial:    boolean;
+  date_range: { start: string; end: string };
+  totals:     AccountSummaryTotals;
+  channels:   AccountChannelBreakdown[];
+}
+
+/** Combined performance across every channel under one account, for a date range (defaults to the current month). */
+export async function fetchAccountSummary(accountId: string, start?: string, end?: string): Promise<AccountSummaryResponse> {
+  return apiFetch<AccountSummaryResponse>("/api/account-summary", {
+    account_id: accountId,
+    start: start ?? "",
+    end: end ?? "",
+  });
+}
+
+export interface AccountTargetResponse {
+  found:         boolean;
+  configured:    boolean;
+  account_id?:   string;
+  month?:        string;
+  target_leads?: number;
+  target_spend?: number;
+}
+
+/** This account's target for a given month ("YYYY-MM"). found=false if none set — not an error. */
+export async function fetchAccountTarget(accountId: string, month: string): Promise<AccountTargetResponse> {
+  return apiFetch<AccountTargetResponse>("/api/account-targets", { account_id: accountId, month });
+}
+
+export interface ChangeRecord {
+  change_id:        string;
+  timestamp:        string;
+  account_id:        string;
+  account_name:      string;
+  change_category:   string;
+  change_type:       string;
+  previous_value?:   string;
+  new_value?:        string;
+  reason:            string;
+  expected_impact?:  string;
+  performed_by:      string;
+  notes?:            string;
+  priority:          string;
+  approval_status:   string;
+}
+
+export interface ChangesResponse {
+  configured: boolean;
+  changes:    ChangeRecord[];
+  error?:     string;
+}
+
+/** Most recent documented changes for an account. configured=false means the Change History sheet isn't deployed yet. */
+export async function fetchRecentChanges(accountId: string, limit = 20): Promise<ChangesResponse> {
+  return apiFetch<ChangesResponse>("/api/changes", { account_id: accountId, limit: String(limit) });
+}
+
+export interface NewChangeEntry {
+  account_id:       string;
+  change_category:  string;
+  change_type:      string;
+  previous_value?:  string;
+  new_value?:       string;
+  reason:           string;
+  expected_impact?: string;
+  notes?:           string;
+  priority?:        string;
+}
+
+/** Document a new change. Throws if Change History isn't configured yet (503) or the request is invalid. */
+export async function logChange(entry: NewChangeEntry): Promise<{ status: string; change_id: string; timestamp: string }> {
+  const token = getStoredToken();
+  const res = await fetch(`${BASE}/api/changes`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(entry),
+  });
+
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail?.detail ?? `API error ${res.status}`);
+  }
+
+  return res.json();
+}

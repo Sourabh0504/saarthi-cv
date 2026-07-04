@@ -2,6 +2,8 @@
 > Everything YOU need to do, in exact order.
 > All code is already written. This is purely your action list.
 
+> **Note:** this guide documents the *original* single-account Google Ads deployment (Aukera Jewellery) and is still accurate for that specific setup. The project has since grown into a multi-tenant portal (Saarthi) supporting many accounts and channels (Google Ads, Meta Ads) — see `PROJECT_SPEC.md` §2 and `README.md` §1 for how a *new* account/channel is added today (it's now a `backend/org_data/*.json` edit, not a new `.env` var).
+
 ---
 
 ## Overview

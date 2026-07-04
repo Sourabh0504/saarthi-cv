@@ -875,6 +875,8 @@ async def fetch_data(start: str, end: str) -> dict:
 
 #### ⚡ Layer 4 — Cache Pre-Warm on Server Startup
 
+> **⚠️ SUPERSEDED — this behavior was deliberately removed** once the backend became multi-channel (see `PROJECT_SPEC.md` §2, `architecture.md` §2.2). Eagerly pre-warming on startup/on a timer only made sense with one hardcoded dataset; at "hundreds of accounts" scale it means hundreds of background Apps Script calls whether or not anyone's viewing them. Current behavior is **lazy per-channel fetch**: the first request for a channel triggers its fetch, cached from then on (`backend/apps_script_connector.py`). The code snippet below is kept for historical context only — it does not reflect the current `main.py`.
+
 When FastAPI starts (or restarts), it immediately pre-fetches the last 30 days of data. This means the **very first user** who opens the portal sees instant data, not a cold-start delay:
 
 ```python
