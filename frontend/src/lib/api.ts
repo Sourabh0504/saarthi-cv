@@ -520,3 +520,37 @@ export async function logChange(entry: NewChangeEntry): Promise<{ status: string
 
   return res.json();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Account Report / Deck (Business Review)
+// ─────────────────────────────────────────────────────────────────────────────
+// Mirrors the CarouselData shape the backend assembles (backend/deck_builder.py),
+// which is itself ContentMaster's schema. Typed loosely on `blocks` because the
+// backend only emits a small, known subset (cover/kpi-grid/progress-bar/compare/
+// timeline) — the Reports page renders exactly those; anything else falls back.
+
+export interface DeckBadge { label: string; icon?: string; tone?: string }
+export interface DeckTitle { part1: string; part2?: string }
+
+export interface DeckSlide {
+  id?: string;
+  template?: string;
+  badge: DeckBadge;
+  title: DeckTitle;
+  blocks: Array<Record<string, unknown>>;
+  footer?: { author?: string; brand?: string };
+}
+
+export interface DeckResponse {
+  meta: { id: string; title: string; subtitle?: string; theme: string; accent: string };
+  slides: DeckSlide[];
+}
+
+/** Assemble a Business Review deck for an account+date range (defaults to current month). */
+export async function fetchAccountReport(accountId: string, start?: string, end?: string): Promise<DeckResponse> {
+  return apiFetch<DeckResponse>("/api/account-report", {
+    account_id: accountId,
+    start: start ?? "",
+    end: end ?? "",
+  });
+}

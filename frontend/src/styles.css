@@ -355,4 +355,15 @@
   }
   .verify-link { display: block !important; text-decoration: underline !important; color: #1a0dab !important; font-size: 11px !important; }
   .creative-card { page-break-inside: avoid; }
+
+  /* Business Review deck: one slide per printed page, keep gold/progress fills. */
+  .deck-slide {
+    page-break-inside: avoid;
+    break-inside: avoid;
+    page-break-after: always;
+    border: 1px solid #ccc !important;
+    box-shadow: none !important;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .deck-slide:last-child { page-break-after: auto; }
 }

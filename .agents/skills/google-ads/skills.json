@@ -1,0 +1,17 @@
+{
+  "entries": [
+    { "path": "skills/google-ads/universal" },
+    { "path": "skills/google-ads/mcc" },
+    { "path": "skills/google-ads/account" },
+    { "path": "skills/google-ads/campaign" },
+    { "path": "skills/google-ads/ad-group" },
+    { "path": "skills/google-ads/keyword" },
+    { "path": "skills/google-ads/creative" },
+    { "path": "skills/google-ads/pmax" },
+    { "path": "skills/google-ads/local" },
+    { "path": "skills/google-ads/demand-gen" },
+    { "path": "skills/google-ads/conversion" },
+    { "path": "skills/google-ads/bi" },
+    { "path": "skills/google-ads/autonomous" }
+  ]
+}

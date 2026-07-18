@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useState, useMemo, useCallback } from "react";
-import { Gem, Palette, Sun, Moon, AlertCircle, RefreshCw, ArrowLeft, Target } from "lucide-react";
+import { Gem, Palette, Sun, Moon, AlertCircle, RefreshCw, ArrowLeft, Target, FileText, ChartLine, LayoutDashboard } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   fetchHomeData, fetchAccountSummary, fetchAccountTarget,
@@ -9,6 +9,7 @@ import {
 import { ChannelIcon } from "@/lib/channelIcons";
 import { ChangeLogWidget } from "@/components/ChangeLogWidget";
 import { CreativeVisibilityWidget } from "@/components/CreativeVisibilityWidget";
+import { TrendsSection } from "@/components/analytics/TrendsSection";
 import { ProfileContent } from "@/routes/profile";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -120,6 +121,17 @@ function AccountOverview() {
     return pct;
   }, [target, summary]);
 
+  // Analytics.md §14.3: the Trends line plots daily (not cumulative) spend,
+  // so the reference line has to be a daily *pace* (monthly target ÷ days in
+  // that month) — a flat line at the full monthly figure would make every
+  // single day look drastically under target.
+  const dailyTargetPace = useMemo(() => {
+    if (!target?.found || !target.target_spend || !target.month) return undefined;
+    const [year, month] = target.month.split("-").map(Number);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    return { value: Math.round(target.target_spend / daysInMonth), label: "Daily pace to hit target" };
+  }, [target]);
+
   if (authLoading || !isLoggedIn) return null;
 
   return (
@@ -145,6 +157,36 @@ function AccountOverview() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {account && (
+            <Link
+              to="/canvas"
+              search={{ account_id: account.id }}
+              className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-foreground/80 hover:border-gold/40 hover:bg-accent/50 transition-colors"
+              title="View pinned charts"
+            >
+              <LayoutDashboard className="w-4 h-4" /> My Dashboard
+            </Link>
+          )}
+          {account && (
+            <Link
+              to="/explore"
+              search={{ account_id: account.id }}
+              className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-foreground/80 hover:border-gold/40 hover:bg-accent/50 transition-colors"
+              title="Build your own chart"
+            >
+              <ChartLine className="w-4 h-4" /> Explore
+            </Link>
+          )}
+          {account && (
+            <Link
+              to="/reports"
+              search={{ account_id: account.id }}
+              className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-foreground/80 hover:border-gold/40 hover:bg-accent/50 transition-colors"
+              title="Generate Business Review deck"
+            >
+              <FileText className="w-4 h-4" /> Business Review
+            </Link>
+          )}
           <Popover>
             <PopoverTrigger asChild>
               <button
@@ -264,6 +306,18 @@ function AccountOverview() {
                 <KpiCard label="CPC" value={`₹${summary.totals.cpc}`} />
                 <KpiCard label="CPM" value={`₹${summary.totals.cpm}`} />
                 <KpiCard label="Cost / Lead" value={`₹${summary.totals.cost_per_conversion}`} />
+              </div>
+
+              {/* Trends */}
+              <div className="rounded-2xl border border-border bg-card/60 backdrop-blur-2xl shadow-card p-5">
+                <h3 className="font-semibold text-foreground mb-3">Trends</h3>
+                <TrendsSection
+                  accountId={accountId}
+                  channels={account.channels}
+                  start={summary.date_range.start}
+                  end={summary.date_range.end}
+                  dailyTargetPace={dailyTargetPace}
+                />
               </div>
 
               {/* Channel split + entry points */}

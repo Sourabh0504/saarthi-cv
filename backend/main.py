@@ -27,6 +27,7 @@ Routes:
   POST /api/sync?channel_id=                                          → force-clear one channel's cache
   GET  /api/home                                                      → accounts/channels the user can see
   GET  /api/account-summary?account_id=&start=&end=                   → combined KPIs across an account's channels
+  GET  /api/account-report?account_id=&start=&end=                    → Business Review deck JSON (ContentMaster-shaped)
 """
 
 from __future__ import annotations
@@ -62,6 +63,7 @@ from org_access import (
 from account_aggregator import fetch_account_summary
 from targets import fetch_account_target
 from change_history import get_recent_changes, log_change, ChangeHistoryNotConfigured
+from deck_builder import build_weekly_business_review
 
 
 def require_channel_access(
@@ -494,6 +496,37 @@ async def post_change(entry: ChangeLogEntry, user: dict = Depends(require_user))
         raise HTTPException(status_code=502, detail=f"Failed to save change: {exc}")
 
     return result
+
+
+@app.get("/api/account-report", tags=["Org"])
+async def get_account_report(
+    account_id: str = Depends(require_account_access),
+    start: str | None = Query(None, description="Start date (YYYY-MM-DD). Defaults to the 1st of the current month."),
+    end:   str | None = Query(None, description="End date (YYYY-MM-DD). Defaults to today."),
+):
+    """
+    Assembles a Weekly/Monthly Business Review deck for one account as a
+    CarouselData-shaped JSON payload (see backend/deck_builder.py) — same
+    schema the already-built ContentMaster slide engine consumes, so a
+    later rendering phase needs no format translation. This route only
+    assembles the data; nothing is rendered here.
+
+    Same date-range defaulting as /api/account-summary (current month if
+    omitted) for the same reason: comparability across the account's channels.
+    """
+    if (start and not end) or (end and not start):
+        raise HTTPException(status_code=400, detail="Provide both start and end, or omit both to default to the current month.")
+    if start and end:
+        _validate_dates(start, end)
+    else:
+        today = _dt.date.today()
+        start = today.replace(day=1).isoformat()
+        end = today.isoformat()
+
+    account_names = {a["id"]: a["name"] for a in load_structure()["accounts"]}
+    account_name = account_names.get(account_id, account_id)
+
+    return await build_weekly_business_review(account_id, account_name, start, end)
 
 
 @app.post("/api/sync", tags=["System"])
