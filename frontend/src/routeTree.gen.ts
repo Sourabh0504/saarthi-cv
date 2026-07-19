@@ -11,10 +11,12 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as ProfileRouteImport } from './routes/profile'
+import { Route as MediaRouteImport } from './routes/media'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ExploreRouteImport } from './routes/explore'
 import { Route as DashboardMetaRouteImport } from './routes/dashboard-meta'
 import { Route as DashboardRouteImport } from './routes/dashboard'
+import { Route as CreativeRouteImport } from './routes/creative'
 import { Route as CanvasRouteImport } from './routes/canvas'
 import { Route as AccountRouteImport } from './routes/account'
 import { Route as IndexRouteImport } from './routes/index'
@@ -27,6 +29,11 @@ const ReportsRoute = ReportsRouteImport.update({
 const ProfileRoute = ProfileRouteImport.update({
   id: '/profile',
   path: '/profile',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MediaRoute = MediaRouteImport.update({
+  id: '/media',
+  path: '/media',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -49,6 +56,11 @@ const DashboardRoute = DashboardRouteImport.update({
   path: '/dashboard',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CreativeRoute = CreativeRouteImport.update({
+  id: '/creative',
+  path: '/creative',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CanvasRoute = CanvasRouteImport.update({
   id: '/canvas',
   path: '/canvas',
@@ -69,10 +81,12 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/account': typeof AccountRoute
   '/canvas': typeof CanvasRoute
+  '/creative': typeof CreativeRoute
   '/dashboard': typeof DashboardRoute
   '/dashboard-meta': typeof DashboardMetaRoute
   '/explore': typeof ExploreRoute
   '/login': typeof LoginRoute
+  '/media': typeof MediaRoute
   '/profile': typeof ProfileRoute
   '/reports': typeof ReportsRoute
 }
@@ -80,10 +94,12 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/account': typeof AccountRoute
   '/canvas': typeof CanvasRoute
+  '/creative': typeof CreativeRoute
   '/dashboard': typeof DashboardRoute
   '/dashboard-meta': typeof DashboardMetaRoute
   '/explore': typeof ExploreRoute
   '/login': typeof LoginRoute
+  '/media': typeof MediaRoute
   '/profile': typeof ProfileRoute
   '/reports': typeof ReportsRoute
 }
@@ -92,10 +108,12 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/account': typeof AccountRoute
   '/canvas': typeof CanvasRoute
+  '/creative': typeof CreativeRoute
   '/dashboard': typeof DashboardRoute
   '/dashboard-meta': typeof DashboardMetaRoute
   '/explore': typeof ExploreRoute
   '/login': typeof LoginRoute
+  '/media': typeof MediaRoute
   '/profile': typeof ProfileRoute
   '/reports': typeof ReportsRoute
 }
@@ -105,10 +123,12 @@ export interface FileRouteTypes {
     | '/'
     | '/account'
     | '/canvas'
+    | '/creative'
     | '/dashboard'
     | '/dashboard-meta'
     | '/explore'
     | '/login'
+    | '/media'
     | '/profile'
     | '/reports'
   fileRoutesByTo: FileRoutesByTo
@@ -116,10 +136,12 @@ export interface FileRouteTypes {
     | '/'
     | '/account'
     | '/canvas'
+    | '/creative'
     | '/dashboard'
     | '/dashboard-meta'
     | '/explore'
     | '/login'
+    | '/media'
     | '/profile'
     | '/reports'
   id:
@@ -127,10 +149,12 @@ export interface FileRouteTypes {
     | '/'
     | '/account'
     | '/canvas'
+    | '/creative'
     | '/dashboard'
     | '/dashboard-meta'
     | '/explore'
     | '/login'
+    | '/media'
     | '/profile'
     | '/reports'
   fileRoutesById: FileRoutesById
@@ -139,10 +163,12 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AccountRoute: typeof AccountRoute
   CanvasRoute: typeof CanvasRoute
+  CreativeRoute: typeof CreativeRoute
   DashboardRoute: typeof DashboardRoute
   DashboardMetaRoute: typeof DashboardMetaRoute
   ExploreRoute: typeof ExploreRoute
   LoginRoute: typeof LoginRoute
+  MediaRoute: typeof MediaRoute
   ProfileRoute: typeof ProfileRoute
   ReportsRoute: typeof ReportsRoute
 }
@@ -161,6 +187,13 @@ declare module '@tanstack/react-router' {
       path: '/profile'
       fullPath: '/profile'
       preLoaderRoute: typeof ProfileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/media': {
+      id: '/media'
+      path: '/media'
+      fullPath: '/media'
+      preLoaderRoute: typeof MediaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -191,6 +224,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/creative': {
+      id: '/creative'
+      path: '/creative'
+      fullPath: '/creative'
+      preLoaderRoute: typeof CreativeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/canvas': {
       id: '/canvas'
       path: '/canvas'
@@ -219,10 +259,12 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AccountRoute: AccountRoute,
   CanvasRoute: CanvasRoute,
+  CreativeRoute: CreativeRoute,
   DashboardRoute: DashboardRoute,
   DashboardMetaRoute: DashboardMetaRoute,
   ExploreRoute: ExploreRoute,
   LoginRoute: LoginRoute,
+  MediaRoute: MediaRoute,
   ProfileRoute: ProfileRoute,
   ReportsRoute: ReportsRoute,
 }

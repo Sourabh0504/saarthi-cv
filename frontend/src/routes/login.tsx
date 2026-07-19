@@ -1,16 +1,19 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useGoogleLogin } from "@react-oauth/google";
-import { Gem, Lock, AlertCircle, Loader2, Chrome } from "lucide-react";
+import { Lock, AlertCircle } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
+import { SaarthiLogo } from "@/components/brand/SaarthiLogo";
+import { SaarthiLoader } from "@/components/brand/SaarthiLoader";
+import { SaarthiMark } from "@/components/brand/SaarthiMark";
 
 const GOOGLE_CLIENT_ID = (import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined) ?? "";
 
 export const Route = createFileRoute("/login")({
   head: () => ({
     meta: [
-      { title: "Sign In — CreativeVisibility" },
+      { title: "Sign In — Saarthi" },
       { name: "description", content: "Authorized access only." },
     ],
     links: [
@@ -18,7 +21,7 @@ export const Route = createFileRoute("/login")({
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "" },
       {
         rel: "stylesheet",
-        href: "https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Montserrat:wght@500;600;700;800&display=swap",
+        href: "https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Montserrat:wght@300;400;500;600;700;800&display=swap",
       },
     ],
   }),
@@ -86,7 +89,15 @@ function GoogleLoginCard() {
     googleLogin();
   };
 
-  if (isLoading) return null;
+  if (isLoading) {
+    return (
+      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[oklch(0.12_0.005_260)] font-sans">
+        <div className="aurora-bg" aria-hidden />
+        <div className="aurora-grid" aria-hidden />
+        <SaarthiLoader theme="dark" size={72} label="Loading" className="relative z-10" />
+      </div>
+    );
+  }
 
   return (
     <div className="relative min-h-screen flex items-center justify-center overflow-hidden bg-[oklch(0.12_0.005_260)] font-sans">
@@ -119,24 +130,8 @@ function GoogleLoginCard() {
           }}
         >
           {/* Logo */}
-          <div className="flex flex-col items-center gap-4 mb-8">
-            <div
-              className="w-16 h-16 rounded-2xl flex items-center justify-center shadow-lg"
-              style={{ background: "linear-gradient(135deg, oklch(0.78 0.15 85) 0%, oklch(0.65 0.18 70) 100%)" }}
-            >
-              <Gem className="w-8 h-8 text-[oklch(0.12_0.005_260)]" />
-            </div>
-            <div className="text-center">
-              <h1
-                className="text-2xl font-bold tracking-tight text-white"
-                style={{ fontFamily: "'Montserrat', sans-serif" }}
-              >
-                CreativeVisibility
-              </h1>
-              <p className="mt-1 text-xs uppercase tracking-[0.2em] text-[oklch(0.78_0.15_85)]">
-                Aukera Jewellery · Performance Portal
-              </p>
-            </div>
+          <div className="mb-8 flex flex-col items-center gap-3">
+            <SaarthiLogo theme="dark" width={280} />
           </div>
 
           {/* Divider */}
@@ -183,7 +178,7 @@ function GoogleLoginCard() {
             }}
           >
             {signing ? (
-              <Loader2 className="w-4 h-4 animate-spin text-[oklch(0.78_0.15_85)]" />
+              <SaarthiMark theme="dark" size={18} className="saarthi-loader-spin" />
             ) : (
               <GoogleIcon />
             )}
@@ -201,7 +196,7 @@ function GoogleLoginCard() {
 
         {/* Version tag */}
         <p className="mt-4 text-center text-[10px] text-white/20 tracking-widest uppercase">
-          CreativeVisibility v1.0 · Restricted
+          Saarthi v1.0 · Restricted
         </p>
       </div>
     </div>

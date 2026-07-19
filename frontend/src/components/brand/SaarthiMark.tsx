@@ -1,0 +1,52 @@
+/**
+ * The Saarthi mark alone (no wordmark/tagline) — a paper-plane/compass "S"
+ * cropped tight to its own geometry (viewBox measured via getBBox(), not
+ * guessed) for use anywhere a compact icon is needed: sidebar brand chip,
+ * favicon, loading spinner.
+ *
+ * `theme` is an explicit prop, not read from ambient `.light`/`.sr-theme`
+ * CSS cascade — call sites that always sit on a dark surface (e.g. the login
+ * page, whose background never follows the app-wide theme toggle) must not
+ * silently inherit a stale `.light` class left on <html> by a different page.
+ */
+export function SaarthiMark({
+  theme = "dark",
+  size = 40,
+  className,
+}: {
+  theme?: "dark" | "light";
+  size?: number;
+  className?: string;
+}) {
+  const ink = theme === "dark" ? "#F5F7FF" : "#0B1A4A";
+  const blue = theme === "dark" ? "#3B6BFF" : "#1E57E8";
+  return (
+    <svg
+      viewBox="392 -21 495 667"
+      width={size}
+      height={size * (667 / 495)}
+      xmlns="http://www.w3.org/2000/svg"
+      role="img"
+      aria-label="Saarthi"
+      className={className}
+    >
+      <g transform="translate(0 620) scale(0.1 -0.1)">
+        <path
+          d="M8390 6069 c-91 -21 -325 -75 -520 -120 -195 -44 -638 -145 -985 -225 -346 -79 -769 -176 -940 -215 -467 -107 -686 -188 -930 -347 -656 -426 -945 -1141 -721 -1782 179 -511 711 -896 1326 -960 259 -27 500 2 935 112 110 28 210 53 223 55 47 11 28 21 -91 47 -908 205 -1251 368 -1468 698 -294 448 -116 989 405 1233 50 24 147 59 216 79 572 165 946 352 2025 1013 243 149 328 202 461 288 184 120 195 121 44 5 -47 -35 -193 -147 -325 -249 -132 -102 -304 -234 -382 -294 -79 -60 -143 -114 -143 -120 0 -5 62 -114 137 -241 75 -127 146 -248 157 -268 12 -21 23 -38 26 -38 3 0 33 51 66 113 93 171 553 1028 618 1150 34 63 52 107 44 106 -7 0 -87 -18 -178 -40z"
+          fill={ink}
+          fillRule="evenodd"
+        />
+        <path
+          d="M5940 3811 c8 -5 116 -46 240 -91 697 -255 923 -374 1159 -611 545 -548 526 -1385 -43 -1955 -183 -182 -356 -289 -604 -370 -138 -45 -272 -69 -893 -159 -288 -41 -582 -87 -654 -101 -241 -50 -470 -143 -635 -259 -80 -57 -224 -185 -240 -214 -10 -19 -25 -20 260 13 452 52 830 74 1470 86 608 11 793 31 1061 116 349 110 598 261 829 501 257 267 411 582 492 1002 26 136 35 426 19 569 -44 379 -200 716 -450 975 -271 280 -601 436 -1039 491 -137 18 -1001 23 -972 7z"
+          fill={blue}
+          fillRule="evenodd"
+        />
+        <path
+          d="M6810 2079 c-201 -94 -313 -145 -626 -288 -181 -82 -181 -82 -246 -174 -247 -348 -401 -563 -501 -702 -64 -88 -114 -161 -113 -162 1 -1 166 73 366 166 201 92 435 199 520 238 178 80 118 15 463 511 100 144 219 316 265 382 46 66 80 120 75 120 -4 -1 -96 -42 -203 -91z m-539 -472 c110 -74 104 -228 -11 -287 -117 -60 -250 33 -236 164 13 119 151 188 247 123z"
+          fill={blue}
+          fillRule="evenodd"
+        />
+      </g>
+    </svg>
+  );
+}

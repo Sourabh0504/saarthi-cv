@@ -1,6 +1,7 @@
 @import "tailwindcss" source(none);
 @source "../src";
 @import "tw-animate-css";
+@import "./styles/signal-room.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -292,6 +293,23 @@
     linear-gradient(90deg, oklch(1 0 0 / 0.025) 1px, transparent 1px);
   background-size: 56px 56px;
   mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 20%, transparent 80%);
+}
+
+/* Saarthi brand mark loader — used by components/brand/SaarthiLoader.tsx
+   (login page, and anywhere else the platform-level Saarthi logo loads).
+   A slow compass-like rotation, distinct from the CreativeVisibility splash
+   animations below which belong to that tool's own dashboard.tsx. */
+@keyframes saarthi-loader-spin {
+  0%   { transform: rotate(0deg) scale(1); }
+  50%  { transform: rotate(180deg) scale(1.04); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+.saarthi-loader-spin {
+  animation: saarthi-loader-spin 1.8s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  transform-origin: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .saarthi-loader-spin { animation: none; }
 }
 
 /* Gold ring orbit animation */

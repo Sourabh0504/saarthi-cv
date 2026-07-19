@@ -1,0 +1,350 @@
+/* =========================================================
+   Signal Room — scoped visual system for the new Overview/Media
+   dashboard (ported from the Lovable "saarthi-llm" prototype).
+
+   Scoped entirely under `.sr-theme` so it never touches the
+   existing gold/palette tokens used by the rest of the app
+   (Home, Creative dashboard, etc). Every custom property is
+   prefixed `--sr-*` and every generated Tailwind utility is
+   prefixed `sr-` (bg-sr-primary, text-sr-foreground, ...).
+
+   Follows the SAME light/dark switch already used app-wide
+   (`.light` class on <html>) — no second theme toggle needed.
+   Default (no `.light`) = Lovable's "Ink" (dark). `.light` = Lovable's
+   "Daylight" (light).
+   ========================================================= */
+
+@theme inline {
+  --color-sr-background: hsl(var(--sr-background));
+  --color-sr-foreground: hsl(var(--sr-foreground));
+  --color-sr-card: hsl(var(--sr-card));
+  --color-sr-card-foreground: hsl(var(--sr-card-foreground));
+  --color-sr-popover: hsl(var(--sr-popover));
+  --color-sr-popover-foreground: hsl(var(--sr-popover-foreground));
+  --color-sr-primary: hsl(var(--sr-primary));
+  --color-sr-primary-foreground: hsl(var(--sr-primary-foreground));
+  --color-sr-secondary: hsl(var(--sr-secondary));
+  --color-sr-secondary-foreground: hsl(var(--sr-secondary-foreground));
+  --color-sr-muted: hsl(var(--sr-muted));
+  --color-sr-muted-foreground: hsl(var(--sr-muted-foreground));
+  --color-sr-accent: hsl(var(--sr-accent));
+  --color-sr-accent-foreground: hsl(var(--sr-accent-foreground));
+  --color-sr-destructive: hsl(var(--sr-destructive));
+  --color-sr-destructive-foreground: hsl(var(--sr-destructive-foreground));
+  --color-sr-success: hsl(var(--sr-success));
+  --color-sr-success-foreground: hsl(var(--sr-success-foreground));
+  --color-sr-warning: hsl(var(--sr-warning));
+  --color-sr-warning-foreground: hsl(var(--sr-warning-foreground));
+  --color-sr-border: hsl(var(--sr-border));
+  --color-sr-input: hsl(var(--sr-input));
+  --color-sr-ring: hsl(var(--sr-ring));
+  --color-sr-sidebar: hsl(var(--sr-sidebar-background));
+  --color-sr-sidebar-foreground: hsl(var(--sr-sidebar-foreground));
+  --color-sr-sidebar-accent: hsl(var(--sr-sidebar-accent));
+  --color-sr-sidebar-accent-foreground: hsl(var(--sr-sidebar-accent-foreground));
+  --color-sr-sidebar-border: hsl(var(--sr-sidebar-border));
+  --color-sr-chart-1: hsl(var(--sr-chart-1));
+  --color-sr-chart-2: hsl(var(--sr-chart-2));
+  --color-sr-chart-3: hsl(var(--sr-chart-3));
+  --color-sr-chart-4: hsl(var(--sr-chart-4));
+}
+
+.sr-theme {
+  /* --- Ink (dark) — default, matches this app's existing dark-by-default convention --- */
+  --sr-background: 228 18% 8%;
+  --sr-foreground: 220 22% 92%;
+
+  --sr-card: 228 16% 14%;
+  --sr-card-foreground: 220 22% 92%;
+
+  --sr-popover: 228 18% 13%;
+  --sr-popover-foreground: 220 22% 92%;
+
+  --sr-primary: 230 92% 68%;
+  --sr-primary-foreground: 228 25% 9%;
+
+  --sr-secondary: 228 12% 19%;
+  --sr-secondary-foreground: 220 22% 92%;
+
+  --sr-muted: 228 12% 19%;
+  --sr-muted-foreground: 220 14% 68%;
+
+  --sr-accent: 228 14% 21%;
+  --sr-accent-foreground: 230 92% 78%;
+
+  --sr-destructive: 356 74% 60%;
+  --sr-destructive-foreground: 0 0% 100%;
+
+  --sr-success: 152 58% 48%;
+  --sr-success-foreground: 228 25% 9%;
+  --sr-warning: 38 94% 58%;
+  --sr-warning-foreground: 228 25% 9%;
+
+  --sr-border: 228 14% 25%;
+  --sr-input: 228 14% 26%;
+  --sr-ring: 230 92% 68%;
+
+  --sr-shadow-xs: 0 1px 2px hsl(0 0% 0% / 0.4);
+  --sr-shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.5), 0 2px 6px hsl(0 0% 0% / 0.35);
+  --sr-shadow-md: 0 6px 20px -6px hsl(0 0% 0% / 0.55);
+  --sr-shadow-glow: 0 8px 30px -10px hsl(var(--sr-primary) / 0.5);
+
+  --sr-chart-1: 230 92% 68%;
+  --sr-chart-2: 262 80% 72%;
+  --sr-chart-3: 152 58% 52%;
+  --sr-chart-4: 38 94% 60%;
+
+  --sr-sidebar-background: 228 20% 6%;
+  --sr-sidebar-foreground: 220 16% 76%;
+  --sr-sidebar-accent: 228 14% 15%;
+  --sr-sidebar-accent-foreground: 220 22% 94%;
+  --sr-sidebar-border: 228 12% 15%;
+
+  --sr-brand: 230 92% 68%;
+  --sr-brand-2: 265 88% 72%;
+  --sr-gradient-brand: linear-gradient(135deg, hsl(230 92% 68%), hsl(265 88% 72%));
+  --sr-gradient-surface: linear-gradient(180deg, hsl(230 92% 68% / 0.07), hsl(0 0% 0% / 0));
+  --sr-grid-line: 220 40% 90%;
+  --sr-grid-alpha: 0.05;
+
+  --sr-radius: 0.75rem;
+
+  background-color: hsl(var(--sr-background));
+  color: hsl(var(--sr-foreground));
+  font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+.light .sr-theme {
+  /* --- Daylight (light) --- */
+  --sr-background: 40 30% 97%;
+  --sr-foreground: 230 25% 13%;
+
+  --sr-card: 0 0% 100%;
+  --sr-card-foreground: 230 25% 13%;
+
+  --sr-popover: 0 0% 100%;
+  --sr-popover-foreground: 230 25% 13%;
+
+  --sr-primary: 231 70% 55%;
+  --sr-primary-foreground: 0 0% 100%;
+
+  --sr-secondary: 40 20% 93%;
+  --sr-secondary-foreground: 230 25% 18%;
+
+  --sr-muted: 40 18% 93%;
+  --sr-muted-foreground: 230 10% 44%;
+
+  --sr-accent: 231 72% 95%;
+  --sr-accent-foreground: 231 62% 44%;
+
+  --sr-destructive: 356 72% 51%;
+  --sr-destructive-foreground: 0 0% 100%;
+
+  --sr-success: 152 56% 38%;
+  --sr-success-foreground: 0 0% 100%;
+  --sr-warning: 34 92% 46%;
+  --sr-warning-foreground: 0 0% 100%;
+
+  --sr-border: 40 14% 87%;
+  --sr-input: 40 14% 87%;
+  --sr-ring: 231 70% 55%;
+
+  --sr-shadow-xs: 0 1px 2px hsl(230 25% 13% / 0.04);
+  --sr-shadow-sm: 0 1px 2px hsl(230 25% 13% / 0.05), 0 2px 6px hsl(230 25% 13% / 0.04);
+  --sr-shadow-md: 0 4px 16px -4px hsl(230 25% 13% / 0.1), 0 2px 6px -2px hsl(230 25% 13% / 0.06);
+  --sr-shadow-glow: 0 8px 30px -10px hsl(var(--sr-primary) / 0.35);
+
+  --sr-chart-1: 231 70% 55%;
+  --sr-chart-2: 262 70% 60%;
+  --sr-chart-3: 152 56% 38%;
+  --sr-chart-4: 34 92% 46%;
+
+  --sr-sidebar-background: 42 26% 95%;
+  --sr-sidebar-foreground: 230 20% 24%;
+  --sr-sidebar-accent: 231 72% 94%;
+  --sr-sidebar-accent-foreground: 231 62% 42%;
+  --sr-sidebar-border: 40 14% 87%;
+
+  --sr-brand: 231 70% 55%;
+  --sr-brand-2: 262 70% 60%;
+  --sr-gradient-brand: linear-gradient(135deg, hsl(231 70% 55%), hsl(262 70% 60%));
+  --sr-gradient-surface: linear-gradient(180deg, hsl(0 0% 100% / 0.6), hsl(0 0% 100% / 0));
+  --sr-grid-line: 230 25% 13%;
+  --sr-grid-alpha: 0.035;
+}
+
+.sr-theme h1, .sr-theme h2, .sr-theme h3, .sr-theme h4, .sr-theme h5 {
+  font-family: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.01em;
+}
+
+.sr-theme .font-sr-num {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-feature-settings: "tnum";
+  letter-spacing: -0.02em;
+}
+
+/* Fine engineering-grid texture behind the main content, matching the
+   source design's ambient background — subtle, never competes with data. */
+.sr-theme .bg-sr-grid {
+  background-image:
+    linear-gradient(to right, hsl(var(--sr-grid-line) / var(--sr-grid-alpha)) 1px, transparent 1px),
+    linear-gradient(to bottom, hsl(var(--sr-grid-line) / var(--sr-grid-alpha)) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.sr-theme .bg-sr-gradient-surface {
+  background: var(--sr-gradient-surface);
+}
+
+.sr-theme .bg-sr-gradient-brand {
+  background: var(--sr-gradient-brand);
+}
+
+.sr-theme .shadow-sr-glow {
+  box-shadow: var(--sr-shadow-glow);
+}
+
+.sr-theme .glass-sr {
+  background: hsl(var(--sr-background) / 0.72);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+}
+
+.sr-theme .card-hover-sr {
+  transition: box-shadow 200ms ease, transform 200ms ease;
+}
+.sr-theme .card-hover-sr:hover {
+  box-shadow: var(--sr-shadow-md);
+  transform: translateY(-2px);
+}
+
+/* Real glassmorphism for every card built with the bg-sr-card/60 +
+   backdrop-blur-2xl combo (KPI cards, panels, sidebar/topbar chips, the
+   Accounts home cards) — a translucent light-tinted border and an inset
+   top highlight so the glass edge is actually visible against the very
+   dark "Ink" background, instead of reading as a flat, low-contrast
+   rectangle that's hard to see in low light. */
+.sr-theme .bg-sr-card\/60 {
+  background-image: linear-gradient(165deg, hsl(0 0% 100% / 0.06), hsl(0 0% 100% / 0) 45%);
+  border-color: hsl(0 0% 100% / 0.12);
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.07), var(--sr-shadow-sm);
+}
+.light .sr-theme .bg-sr-card\/60 {
+  background-image: linear-gradient(165deg, hsl(0 0% 100% / 0.55), hsl(0 0% 100% / 0) 55%);
+  border-color: hsl(230 25% 13% / 0.09);
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.7), var(--sr-shadow-sm);
+}
+
+/* Ambient "signal" breathing glow on the brand mark — echoes the live-data
+   pulse at the foot of the sidebar so the metaphor bookends the nav. */
+.sr-theme .animate-sr-breathe {
+  animation: sr-breathe 3.2s ease-in-out infinite;
+}
+@keyframes sr-breathe {
+  0%, 100% { box-shadow: var(--sr-shadow-glow); }
+  50% { box-shadow: 0 0 0 6px hsl(var(--sr-primary) / 0.12), var(--sr-shadow-glow); }
+}
+
+/* Custom scrollbar — thin, tinted to match the theme instead of the browser default. */
+.sr-theme ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.sr-theme ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sr-theme ::-webkit-scrollbar-thumb {
+  background: hsl(var(--sr-muted-foreground) / 0.28);
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+.sr-theme ::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--sr-muted-foreground) / 0.5);
+  background-clip: content-box;
+}
+
+/* Shimmer skeleton — a moving highlight sweep instead of a flat pulse,
+   reads as "actively loading" rather than "stuck". */
+.sr-theme .animate-pulse {
+  position: relative;
+  overflow: hidden;
+  animation: none;
+  background: hsl(var(--sr-muted));
+}
+.sr-theme .animate-pulse::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, hsl(var(--sr-foreground) / 0.06), transparent);
+  animation: sr-shimmer 1.6s ease-in-out infinite;
+}
+@keyframes sr-shimmer {
+  100% { transform: translateX(100%); }
+}
+
+/* Smooth entrance for freshly-loaded content (KPI cards, panels) —
+   applied via the `animate-sr-in` class, staggered with inline delay. */
+.sr-theme .animate-sr-in {
+  animation: sr-fade-up 400ms ease both;
+}
+@keyframes sr-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Mobile nav drawer — backdrop fade + panel slide, used by SignalRoomLayout
+   below the `lg` breakpoint where the persistent sidebar is hidden. */
+.sr-theme .animate-sr-fade {
+  animation: sr-fade 200ms ease both;
+}
+@keyframes sr-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.sr-theme .animate-sr-slide-in {
+  animation: sr-slide-in 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes sr-slide-in {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+/* Visible keyboard focus across every custom Signal Room control — buttons,
+   nav items, tab pills, chart toggles rely on this since they suppress the
+   native outline in favor of their own hover treatment. */
+.sr-theme :where(a, button, [role="button"], [role="tab"], input, [tabindex]):focus-visible {
+  outline: none;
+  border-radius: var(--sr-radius);
+  box-shadow: 0 0 0 2px hsl(var(--sr-background)), 0 0 0 4px hsl(var(--sr-ring));
+}
+
+/* Respect motion sensitivity — the entrance stagger, hover lift, live-data
+   pulse and shimmer sweep all become instant/static rather than disabled
+   outright, so content still communicates state without motion. */
+@media (prefers-reduced-motion: reduce) {
+  .sr-theme .animate-sr-in {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+  .sr-theme .card-hover-sr {
+    transition: box-shadow 120ms ease;
+  }
+  .sr-theme .card-hover-sr:hover {
+    transform: none;
+  }
+  .sr-theme .animate-pulse::after {
+    animation: none;
+  }
+  .sr-theme .animate-ping {
+    animation: none;
+  }
+  .sr-theme .animate-sr-fade,
+  .sr-theme .animate-sr-slide-in,
+  .sr-theme .animate-sr-breathe {
+    animation: none;
+  }
+}

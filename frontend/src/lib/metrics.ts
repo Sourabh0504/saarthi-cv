@@ -66,6 +66,33 @@ export const fmtNum = (v: number) => numFormatter.format(v || 0);
 
 export const fmtPct = (v: number) => v.toFixed(2) + "%";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// KPI delta helper — used by the Signal Room (Overview/Media) dashboard to
+// show a value alongside its period-over-period change, direction, and
+// whether that direction is "good" (e.g. spend up = neutral, CPA up = bad).
+// Kept here (not duplicated) so any future dashboard can reuse it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type TrendDirection = "up" | "down" | "flat";
+
+export interface KPIValue {
+  value: number;
+  pctChange: number | null;
+  direction: TrendDirection;
+  isBetter: boolean | null;
+  formatted: string;
+}
+
+/** Build a KPIValue with correct polarity. higherIsBetter=false for CPA-like metrics. */
+export function makeKPI(value: number, previous: number | null, formatted: string, higherIsBetter = true): KPIValue {
+  const pctChange = previous === null || previous === 0 ? null : ((value - previous) / previous) * 100;
+  let direction: TrendDirection = "flat";
+  if (pctChange !== null && Math.abs(pctChange) > 0.05) direction = pctChange > 0 ? "up" : "down";
+  let isBetter: boolean | null = null;
+  if (pctChange !== null && direction !== "flat") isBetter = higherIsBetter ? pctChange > 0 : pctChange < 0;
+  return { value, pctChange, direction, isBetter, formatted };
+}
+
 export function getYouTubeId(url: string): string | null {
   const patterns = [
     /youtu\.be\/([\w-]{11})/,
